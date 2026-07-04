@@ -186,8 +186,8 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
 renderer.outputEncoding = THREE.sRGBEncoding;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xa9c2da);
-scene.fog = new THREE.Fog(0xa9c2da, 1600, 9000);
+scene.background = new THREE.Color(0xc3ddf2);
+scene.fog = new THREE.Fog(0xc3ddf2, 1600, 9000);
 
 const camera = new THREE.PerspectiveCamera(55, 1, 2, 14000);
 
@@ -202,7 +202,7 @@ scene.add(sun);
 let timeMode = 'day';
 const TIMES = {
   day: {
-    fog: 0xa9c2da, fogNear: 1600, fogFar: 9000,
+    fog: 0xc3ddf2, fogNear: 1600, fogFar: 9000,
     hemiSky: 0xbdd5ee, hemiGnd: 0x8a8578, hemiInt: 1.05,
     sunCol: 0xfff1d6, sunInt: 1.35, sunPos: [-900, 2000, 700], emissive: 0.06,
     ground: { base: '#6e6f68', asphalt: '#54575d', sidewalk: '#83858a', block1: '#72747a', block2: '#7a7c7f',

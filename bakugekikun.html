@@ -600,10 +600,9 @@ function addBuildingLot(lot, rng){
   const { x, z, rot, availW, availD, distC } = lot;
   if(Math.abs(x) > 2600 || Math.abs(z) > 2600) return;
   if(lot.house){
-    if(rng() < 0.14){                                    // 空き地 → 児童公園か木の茂み
-      if(rng() < 0.55)
-        lotDecals.push({ x, z, rot, w: Math.max(7, availW - 3), d: Math.max(7, availD - 3), kind: 'park' });
-      yardTrees(lot, 3 + Math.floor(rng() * 4), rng, true);
+    if(rng() < 0.14){                                    // 空き地 → 児童公園(緑地 + 密な木)
+      lotDecals.push({ x, z, rot, w: Math.max(7, availW - 3), d: Math.max(7, availD - 3), kind: 'park' });
+      yardTrees(lot, Math.min(45, Math.max(4, Math.floor(availW * availD / 55))), rng, true);
       return;
     }
     if(rng() < 0.05){                                    // 低層アパート
@@ -631,9 +630,9 @@ function addBuildingLot(lot, rng){
       if(rng() < 0.45){
         lotDecals.push({ x, z, rot, w: Math.max(8, availW - 4), d: Math.max(8, availD - 4), kind: 'parking' });
       } else {
-        // ビルの隙間の小公園: 緑地 + 密な植栽
+        // ビルの隙間の小公園: 緑地 + 森のような植栽
         lotDecals.push({ x, z, rot, w: Math.max(8, availW - 3), d: Math.max(8, availD - 3), kind: 'park' });
-        yardTrees(lot, 4 + Math.floor(rng() * 6), rng, true);
+        yardTrees(lot, Math.min(45, Math.max(6, Math.floor(availW * availD / 55))), rng, true);
       }
       return;
     }
@@ -706,7 +705,7 @@ function genGridPlan(rng, organic){
       for(let v = v1; v > v0; v -= step) poly.push(warp(u0, v));
       groundPolys.push({ pts: poly, kind: park ? 'park' : house ? 'house' : 'block', v: rng() < 0.5 });
       if(park){
-        parkTreeJobs.push({ n: Math.min(75, Math.max(16, Math.floor((u1 - u0) * (v1 - v0) / 300))),
+        parkTreeJobs.push({ n: Math.min(220, Math.max(30, Math.floor((u1 - u0) * (v1 - v0) / 110))),
           sample: () => warp(u0 + 8 + rng() * (u1 - u0 - 16), v0 + 8 + rng() * (v1 - v0 - 16)) });
         continue;
       }
@@ -779,10 +778,12 @@ function genRadialPlan(rng){
     plaza.push({ x: cx + Math.cos(a) * (rMin - 12), z: cz + Math.sin(a) * (rMin - 12) });
   }
   groundPolys.push({ pts: plaza, kind: 'park' });
-  parkTreeJobs.push({ n: 60, sample: () => {
-    const a = rng() * Math.PI * 2, rr = Math.sqrt(rng()) * (rMin - 25);
-    return { x: cx + Math.cos(a) * rr, z: cz + Math.sin(a) * rr };
-  }});
+  parkTreeJobs.push({
+    n: Math.min(260, Math.floor(Math.PI * (rMin - 25) * (rMin - 25) / 130)),
+    sample: () => {
+      const a = rng() * Math.PI * 2, rr = Math.sqrt(rng()) * (rMin - 25);
+      return { x: cx + Math.cos(a) * rr, z: cz + Math.sin(a) * rr };
+    }});
   // 街区: リング帯 × スポーク区間の扇形
   for(let ri = 0; ri < rings.length; ri++){
     const rIn = rings[ri].r + rings[ri].w / 2 + 5;
@@ -806,7 +807,7 @@ function genRadialPlan(rng){
       for(let k = nA; k >= 0; k--){ const a = aA + (aB - aA) * k / nA; poly.push({ x: cx + Math.cos(a) * rIn, z: cz + Math.sin(a) * rIn }); }
       groundPolys.push({ pts: poly, kind: park ? 'park' : house ? 'house' : 'block', v: rng() < 0.5 });
       if(park){
-        parkTreeJobs.push({ n: Math.min(65, Math.max(16, Math.floor((rOut - rIn) * (aB - aA) * rm / 300))),
+        parkTreeJobs.push({ n: Math.min(200, Math.max(30, Math.floor((rOut - rIn) * (aB - aA) * rm / 110))),
           sample: () => { const a = aA + rng() * (aB - aA), rr = rIn + 8 + rng() * (rOut - rIn - 16);
             return { x: cx + Math.cos(a) * rr, z: cz + Math.sin(a) * rr }; } });
         continue;

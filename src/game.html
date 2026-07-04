@@ -85,14 +85,14 @@ const TIMES = {
     fog: 0xa9c2da, fogNear: 1600, fogFar: 9000,
     hemiSky: 0xbdd5ee, hemiGnd: 0x8a8578, hemiInt: 1.05,
     sunCol: 0xfff1d6, sunInt: 1.35, sunPos: [-900, 2000, 700], emissive: 0.06,
-    ground: { base: '#54575d', sidewalk: '#8b8e93', block1: '#7b7e85', block2: '#83858a',
+    ground: { base: '#73746c', asphalt: '#54575d', sidewalk: '#8b8e93', block1: '#7b7e85', block2: '#83858a',
       park: '#5c8a58', house: '#8d8a80', lane: 'rgba(245,225,150,0.85)' }
   },
   dusk: {
     fog: 0x1c2438, fogNear: 1400, fogFar: 7500,
     hemiSky: 0x3a5480, hemiGnd: 0x241a12, hemiInt: 0.95,
     sunCol: 0xff9a5a, sunInt: 0.75, sunPos: [-1600, 700, 900], emissive: 0.85,
-    ground: { base: '#191b20', sidewalk: '#33363c', block1: '#26282e', block2: '#2b2c31',
+    ground: { base: '#1f211d', asphalt: '#191b20', sidewalk: '#33363c', block1: '#26282e', block2: '#2b2c31',
       park: '#22392a', house: '#2a2822', lane: 'rgba(190,175,120,0.5)' }
   }
 };
@@ -104,7 +104,7 @@ function applyTime(mode){
   hemi.color.setHex(T.hemiSky); hemi.groundColor.setHex(T.hemiGnd); hemi.intensity = T.hemiInt;
   sun.color.setHex(T.sunCol); sun.intensity = T.sunInt; sun.position.set(...T.sunPos);
   for(const m of emissiveMats) m.emissiveIntensity = T.emissive * (m.userData.eScale || 1);
-  if(gCtx && cityBlocks.length) drawGround();
+  if(gCtx && groundPolys.length) drawGround();
   document.getElementById('timeBtn').textContent = mode === 'day' ? '時間帯: 昼' : '時間帯: 夕暮れ';
 }
 
@@ -251,9 +251,12 @@ function makeHouseTexture(rng){
 
 // ---------- 街の生成 ----------
 let buildings = [];      // {x,z,sx,sz,h,rot,value,state,k(種類),i,mi}
-let cars = [];           // {axis,coord,t,dir,lane,speed,alive,i,color}
+let cars = [];           // {road,s,dir,lane,speed,alive,i,color}
 let trees = [];          // {x,z,s,alive,i}
-let roadsV = [], roadsH = [], cityBlocks = [];
+let roadPaths = [];      // {pts:[{x,z}] 等間隔ROAD_STEP, w, major, loop}
+let groundPolys = [];    // 地面の塗り分けポリゴン {pts, kind:'park'|'house'|'block', v}
+let cityPlan = 'grid';   // 'grid' | 'organic' | 'radial' (シードで決まる)
+let pendingLots = [], parkTreeJobs = [];   // プラン生成 → 建物/木生成への受け渡し
 let bMeshes = [];        // 種類別メッシュ [0:コンクリビル, 1:ガラスビル, 2:民家(赤屋根), 3:民家(スレート屋根)]
 let treeMesh = null, carMesh = null, ground = null;
 let gCanvas = null, gCtx = null, gTex = null;
@@ -350,6 +353,64 @@ function makeTowerGeometry(){
 
 function gridKey(x, z){ return (Math.floor((x + 2700) / GRID_CELL) * 4096) + Math.floor((z + 2700) / GRID_CELL); }
 
+// ---------- 道路パス(任意形状の道路をポリラインで統一的に扱う) ----------
+const ROAD_STEP = 20;    // パス上の点の間隔(m)
+
+// 粗い点列を等間隔ROAD_STEPに打ち直す
+function resamplePath(raw, loop){
+  const pts = [{ x: raw[0].x, z: raw[0].z }];
+  const src = loop ? raw.concat([raw[0]]) : raw;
+  let prev = src[0], acc = 0;
+  for(let i = 1; i < src.length; i++){
+    const cur = src[i];
+    let dx = cur.x - prev.x, dz = cur.z - prev.z;
+    let segLen = Math.hypot(dx, dz);
+    while(segLen > 0 && acc + segLen >= ROAD_STEP){
+      const t = (ROAD_STEP - acc) / segLen;
+      prev = { x: prev.x + dx * t, z: prev.z + dz * t };
+      pts.push({ x: prev.x, z: prev.z });
+      dx = cur.x - prev.x; dz = cur.z - prev.z;
+      segLen = Math.hypot(dx, dz);
+      acc = 0;
+    }
+    acc += segLen;
+    prev = cur;
+  }
+  return pts;
+}
+
+// パス上の距離sにおける位置と進行方向
+function carPose(road, s){
+  const n = road.pts.length;
+  const maxS = (n - 1) * ROAD_STEP;
+  s = ((s % maxS) + maxS) % maxS;
+  const i = Math.min(n - 2, Math.floor(s / ROAD_STEP));
+  const f = s / ROAD_STEP - i;
+  const a = road.pts[i], b = road.pts[i + 1];
+  let dx = b.x - a.x, dz = b.z - a.z;
+  const l = Math.hypot(dx, dz) || 1;
+  return { x: a.x + dx * f, z: a.z + dz * f, dx: dx / l, dz: dz / l };
+}
+
+// 道路上かどうかの粗い判定マスク(並木を交差点上に植えないため)
+const MASK_CELL = 20;
+let roadMask = new Set();
+function buildRoadMask(){
+  roadMask = new Set();
+  for(const rp of roadPaths){
+    const rad = Math.max(0, Math.floor((rp.w / 2 - 6) / MASK_CELL));
+    for(const p of rp.pts){
+      const cx = Math.round((p.x + 2700) / MASK_CELL), cz = Math.round((p.z + 2700) / MASK_CELL);
+      for(let ax = -rad; ax <= rad; ax++)
+        for(let az = -rad; az <= rad; az++)
+          roadMask.add((cx + ax) * 8192 + (cz + az));
+    }
+  }
+}
+function onRoad(x, z){
+  return roadMask.has(Math.round((x + 2700) / MASK_CELL) * 8192 + Math.round((z + 2700) / MASK_CELL));
+}
+
 function genRoadLines(rng){
   const lines = [{ c: -CITY_HALF, w: 30, major: true }];
   let c = -CITY_HALF;
@@ -363,13 +424,226 @@ function genRoadLines(rng){
   return lines;
 }
 
+// ---------- 建物パレットとロット → 建物の変換 ----------
+const PAL_CON = [0xcfd2d6, 0xd8d2c6, 0xbac4cc, 0xc9c9c2, 0xaab4be, 0xd6cfc2, 0x9aa6b0];
+const PAL_GLA = [0xe9eff6, 0xd8e2ec, 0xc6d2e0, 0xe2e8ee, 0xcdd8e2];
+const PAL_HOU = [0xf0ead8, 0xe6ddca, 0xdcd6c6, 0xd2d8dc, 0xdde2d2, 0xe8d8c0, 0xcfc8b8];
+
+// プラン生成器が出したロット {x,z,rot,availW,availD,distC,house} を建物にする
+function addBuildingLot(lot, rng){
+  const { x, z, rot, availW, availD, distC } = lot;
+  if(Math.abs(x) > 2600 || Math.abs(z) > 2600) return;
+  if(lot.house){
+    if(rng() < 0.13) return;                             // 空き地
+    if(rng() < 0.05){                                    // 低層アパート
+      const sx = Math.max(8, availW - 4), sz = Math.max(8, availD - 4);
+      const h = 9 + rng() * 15;
+      buildings.push({ x, z, gy: groundLevel(x, z, sx, sz), sx, sz, h, rot, k: 0,
+        value: sx * sz * (h / FLOOR_H) * VALUE_PER_M2_FLOOR,
+        color: new THREE.Color(PAL_CON[Math.floor(rng() * PAL_CON.length)]).offsetHSL(0, 0, (rng() - 0.5) * 0.1),
+        state: 0 });
+    } else {
+      const m = 2.5 + rng() * 2;
+      const sx = Math.min(12, Math.max(5.5, availW - m * 2));
+      const sz = Math.min(12, Math.max(5.5, availD - m * 2));
+      const h = 4.5 + rng() * 3.2;
+      buildings.push({ x, z, gy: groundLevel(x, z, sx, sz), sx, sz, h,
+        rot: rot + (rng() < 0.5 ? 0 : Math.PI / 2) + (rng() - 0.5) * 0.09,
+        k: rng() < 0.55 ? 2 : 3,
+        value: sx * sz * 2 * 200000,
+        color: new THREE.Color(PAL_HOU[Math.floor(rng() * PAL_HOU.length)]).offsetHSL(0, 0, (rng() - 0.5) * 0.06),
+        state: 0 });
+    }
+  } else {
+    if(rng() < 0.10) return;                             // 空地・駐車場
+    const m = 2 + rng() * 3;
+    const sx = Math.max(9, Math.min(availW * 0.92, availW - m * 2));
+    const sz = Math.max(9, Math.min(availD * 0.92, availD - m * 2));
+    const urban = Math.pow(Math.max(0, 1 - distC), 2);
+    let h = 10 + Math.pow(rng(), 2.2) * (24 + 300 * urban);
+    if(distC < 0.22 && rng() < 0.35) h = 90 + rng() * 190;   // 都心の超高層
+    h = Math.min(h, 300);
+    const glass = rng() < (h > 55 ? 0.6 : 0.12);         // 高層はガラス張りが多い
+    const pal = glass ? PAL_GLA : PAL_CON;
+    buildings.push({ x, z, gy: groundLevel(x, z, sx, sz), sx, sz, h, rot, k: glass ? 1 : 0,
+      value: sx * sz * (h / FLOOR_H) * VALUE_PER_M2_FLOOR,
+      color: new THREE.Color(pal[Math.floor(rng() * pal.length)]).offsetHSL(0, 0, (rng() - 0.5) * 0.1),
+      state: 0 });
+  }
+}
+
+// ---------- 都市プラン: 碁盤目 / 有機的(ワープした碁盤目) ----------
+function genGridPlan(rng, organic){
+  // なめらかな変位場で格子全体を歪ませると、曲がった道路と不定形の街区になる
+  const WN = 9;
+  const wgx = new Float32Array(WN * WN), wgz = new Float32Array(WN * WN);
+  for(let i = 0; i < WN * WN; i++){ wgx[i] = rng(); wgz[i] = rng(); }
+  const amp = organic ? 110 + rng() * 130 : 0;
+  const wSamp = (gr, u, v) => {
+    u = Math.max(0, Math.min(WN - 1.001, u)); v = Math.max(0, Math.min(WN - 1.001, v));
+    const x0 = Math.floor(u), z0 = Math.floor(v);
+    let fx = u - x0, fz = v - z0;
+    fx = fx * fx * (3 - 2 * fx); fz = fz * fz * (3 - 2 * fz);
+    const i = z0 * WN + x0;
+    const a = gr[i], b = gr[i + 1], c = gr[i + WN], d = gr[i + WN + 1];
+    return a + (b - a) * fx + (c - a) * fz + (a - b - c + d) * fx * fz;
+  };
+  const warp = (u, v) => {
+    if(!amp) return { x: u, z: v };
+    const fade = Math.max(0, Math.min(1, 1 - (Math.max(Math.abs(u), Math.abs(v)) - 2200) / 300));
+    const gu = (u + 3200) / 6400 * (WN - 1), gv = (v + 3200) / 6400 * (WN - 1);
+    return { x: u + (wSamp(wgx, gu, gv) - 0.5) * 2 * amp * fade,
+             z: v + (wSamp(wgz, gu, gv) - 0.5) * 2 * amp * fade };
+  };
+  const linesU = genRoadLines(rng), linesV = genRoadLines(rng);
+  for(const l of linesU){
+    const raw = [];
+    for(let v = -CITY_HALF; v <= CITY_HALF + 1; v += 50) raw.push(warp(l.c, v));
+    roadPaths.push({ pts: resamplePath(raw, false), w: l.w, major: l.major, loop: false });
+  }
+  for(const l of linesV){
+    const raw = [];
+    for(let u = -CITY_HALF; u <= CITY_HALF + 1; u += 50) raw.push(warp(u, l.c));
+    roadPaths.push({ pts: resamplePath(raw, false), w: l.w, major: l.major, loop: false });
+  }
+  // 街区
+  for(let i = 0; i < linesU.length - 1; i++){
+    for(let j = 0; j < linesV.length - 1; j++){
+      const u0 = linesU[i].c + linesU[i].w / 2, u1 = linesU[i + 1].c - linesU[i + 1].w / 2;
+      const v0 = linesV[j].c + linesV[j].w / 2, v1 = linesV[j + 1].c - linesV[j + 1].w / 2;
+      if(u1 - u0 < 24 || v1 - v0 < 24) continue;
+      const wc = warp((u0 + u1) / 2, (v0 + v1) / 2);
+      const distC = Math.hypot(wc.x, wc.z) / CITY_HALF;
+      const park = rng() < 0.06;
+      const house = !park && distC > 0.6 + (rng() - 0.5) * 0.14;
+      // 塗り用ポリゴン(縁を分割してからワープすると曲線に沿う)
+      const poly = [], step = 45;
+      for(let u = u0; u < u1; u += step) poly.push(warp(u, v0));
+      for(let v = v0; v < v1; v += step) poly.push(warp(u1, v));
+      for(let u = u1; u > u0; u -= step) poly.push(warp(u, v1));
+      for(let v = v1; v > v0; v -= step) poly.push(warp(u0, v));
+      groundPolys.push({ pts: poly, kind: park ? 'park' : house ? 'house' : 'block', v: rng() < 0.5 });
+      if(park){
+        parkTreeJobs.push({ n: Math.min(28, Math.max(6, Math.floor((u1 - u0) * (v1 - v0) / 900))),
+          sample: () => warp(u0 + 8 + rng() * (u1 - u0 - 16), v0 + 8 + rng() * (v1 - v0 - 16)) });
+        continue;
+      }
+      // ロット分割
+      const w = u1 - u0 - 10, d = v1 - v0 - 10;
+      const nx = Math.max(1, house ? Math.floor(w / (15 + rng() * 6)) : Math.min(4, Math.floor(w / (26 + rng() * 26))));
+      const nz = Math.max(1, house ? Math.floor(d / (15 + rng() * 6)) : Math.min(4, Math.floor(d / (26 + rng() * 26))));
+      const cw = w / nx, cd = d / nz;
+      for(let ix = 0; ix < nx; ix++) for(let iz = 0; iz < nz; iz++){
+        const cu = u0 + 5 + cw * ix + cw / 2, cv = v0 + 5 + cd * iz + cd / 2;
+        const wp = warp(cu, cv);
+        const we = warp(cu + 8, cv);
+        const rot = Math.atan2(-(we.z - wp.z), we.x - wp.x);  // 局所的な格子の向きに沿わせる
+        pendingLots.push({ x: wp.x, z: wp.z, rot, availW: cw, availD: cd, distC, house });
+      }
+    }
+  }
+}
+
+// ---------- 都市プラン: 放射環状(環状道路 + 放射道路) ----------
+function genRadialPlan(rng){
+  const cx = (rng() - 0.5) * 300, cz = (rng() - 0.5) * 300;   // 中心を少しずらす
+  const rings = [];
+  let r = 150 + rng() * 80;
+  while(r < CITY_HALF - 60){
+    rings.push({ r, w: rng() < 0.3 ? 30 : 18, major: rng() < 0.35 || rings.length === 0 });
+    r += 150 + rng() * 170;
+  }
+  const nSp = 10 + Math.floor(rng() * 8);
+  const spokes = [];
+  const a0 = rng() * Math.PI * 2;
+  for(let k = 0; k < nSp; k++){
+    spokes.push({ a: a0 + (k / nSp) * Math.PI * 2 + (rng() - 0.5) * 0.16,
+      w: rng() < 0.3 ? 30 : 18, major: rng() < 0.35 });
+  }
+  spokes.sort((p, q) => p.a - q.a);
+  for(const g of rings){
+    const raw = [];
+    const n = Math.max(24, Math.round(g.r * 2 * Math.PI / 45));
+    for(let i = 0; i < n; i++){
+      const a = i / n * Math.PI * 2;
+      raw.push({ x: cx + Math.cos(a) * g.r, z: cz + Math.sin(a) * g.r });
+    }
+    roadPaths.push({ pts: resamplePath(raw, true), w: g.w, major: g.major, loop: true });
+  }
+  const rMin = rings[0].r;
+  for(const sp of spokes){
+    const raw = [
+      { x: cx + Math.cos(sp.a) * rMin * 0.55, z: cz + Math.sin(sp.a) * rMin * 0.55 },
+      { x: cx + Math.cos(sp.a) * CITY_HALF, z: cz + Math.sin(sp.a) * CITY_HALF }];
+    roadPaths.push({ pts: resamplePath(raw, false), w: sp.w, major: sp.major, loop: false });
+  }
+  // 中央広場は公園
+  const plaza = [];
+  for(let i = 0; i < 40; i++){
+    const a = i / 40 * Math.PI * 2;
+    plaza.push({ x: cx + Math.cos(a) * (rMin - 12), z: cz + Math.sin(a) * (rMin - 12) });
+  }
+  groundPolys.push({ pts: plaza, kind: 'park' });
+  parkTreeJobs.push({ n: 30, sample: () => {
+    const a = rng() * Math.PI * 2, rr = Math.sqrt(rng()) * (rMin - 25);
+    return { x: cx + Math.cos(a) * rr, z: cz + Math.sin(a) * rr };
+  }});
+  // 街区: リング帯 × スポーク区間の扇形
+  for(let ri = 0; ri < rings.length; ri++){
+    const rIn = rings[ri].r + rings[ri].w / 2 + 5;
+    const rOut = (ri === rings.length - 1
+      ? Math.min(CITY_HALF, rings[ri].r + 260)
+      : rings[ri + 1].r - rings[ri + 1].w / 2 - 5);
+    if(rOut - rIn < 26) continue;
+    const rm = (rIn + rOut) / 2;
+    for(let si = 0; si < spokes.length; si++){
+      const s0 = spokes[si], s1 = spokes[(si + 1) % spokes.length];
+      const gap = (si === spokes.length - 1 ? s1.a + Math.PI * 2 : s1.a) - s0.a;
+      const aA = s0.a + (s0.w / 2 + 5) / rm;
+      const aB = s0.a + gap - (s1.w / 2 + 5) / rm;
+      if(aB - aA < 24 / rm) continue;
+      const distC = rm / CITY_HALF;
+      const park = rng() < 0.05;
+      const house = !park && distC > 0.6 + (rng() - 0.5) * 0.14;
+      const poly = [];
+      const nA = Math.max(4, Math.round((aB - aA) * rOut / 40));
+      for(let k = 0; k <= nA; k++){ const a = aA + (aB - aA) * k / nA; poly.push({ x: cx + Math.cos(a) * rOut, z: cz + Math.sin(a) * rOut }); }
+      for(let k = nA; k >= 0; k--){ const a = aA + (aB - aA) * k / nA; poly.push({ x: cx + Math.cos(a) * rIn, z: cz + Math.sin(a) * rIn }); }
+      groundPolys.push({ pts: poly, kind: park ? 'park' : house ? 'house' : 'block', v: rng() < 0.5 });
+      if(park){
+        parkTreeJobs.push({ n: Math.min(24, Math.max(6, Math.floor((rOut - rIn) * (aB - aA) * rm / 900))),
+          sample: () => { const a = aA + rng() * (aB - aA), rr = rIn + 8 + rng() * (rOut - rIn - 16);
+            return { x: cx + Math.cos(a) * rr, z: cz + Math.sin(a) * rr }; } });
+        continue;
+      }
+      // ロット分割(半径方向 × 角度方向)
+      const depth = rOut - rIn - 8;
+      const nr = Math.max(1, house ? Math.floor(depth / (15 + rng() * 6)) : Math.min(3, Math.floor(depth / (28 + rng() * 22))));
+      const cd = depth / nr;
+      for(let jr = 0; jr < nr; jr++){
+        const rc = rIn + 4 + cd * jr + cd / 2;
+        const arc = (aB - aA) * rc;
+        const nt = Math.max(1, house ? Math.floor(arc / (15 + rng() * 6)) : Math.min(5, Math.floor(arc / (26 + rng() * 26))));
+        const cwA = arc / nt;
+        for(let it = 0; it < nt; it++){
+          const ac = aA + (aB - aA) * ((it + 0.5) / nt);
+          const x = cx + Math.cos(ac) * rc, z = cz + Math.sin(ac) * rc;
+          const rot = Math.atan2(-Math.cos(ac), -Math.sin(ac));  // 接線(リング)方向に沿わせる
+          pendingLots.push({ x, z, rot, availW: cwA, availD: cd, distC, house });
+        }
+      }
+    }
+  }
+}
+
 function generateCity(seedStr){
   // 旧オブジェクト破棄
   cityGroup.traverse(o => { if(o.geometry) o.geometry.dispose(); if(o.material){ (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => { if(m.map) m.map.dispose(); if(m.emissiveMap) m.emissiveMap.dispose(); m.dispose(); }); } });
   scene.remove(cityGroup);
   cityGroup = new THREE.Group();
   scene.add(cityGroup);
-  buildings = []; cars = []; trees = []; cityBlocks = []; grid = new Map();
+  buildings = []; cars = []; trees = []; grid = new Map();
+  roadPaths = []; groundPolys = []; pendingLots = []; parkTreeJobs = [];
   for(const m of missiles){ scene.remove(m.mesh); scene.remove(m.marker); m.marker.material.dispose(); }
   for(const f of fx){ scene.remove(f.mesh); f.mesh.material.dispose(); }
   missiles.length = 0; fx.length = 0; collapsing.length = 0;
@@ -384,21 +658,12 @@ function generateCity(seedStr){
 
   const rng = mulberry32(xfnv1a(seedStr));
   buildTerrain(rng);               // 起伏もシードで決まる
-  roadsV = genRoadLines(rng);
-  roadsH = genRoadLines(rng);
 
-  // --- 街区の区画割りと分類(公園 / 住宅街 / ビル街) ---
-  for(let i = 0; i < roadsV.length - 1; i++){
-    for(let j = 0; j < roadsH.length - 1; j++){
-      const x0 = roadsV[i].c + roadsV[i].w / 2, x1 = roadsV[i + 1].c - roadsV[i + 1].w / 2;
-      const z0 = roadsH[j].c + roadsH[j].w / 2, z1 = roadsH[j + 1].c - roadsH[j + 1].w / 2;
-      if(x1 - x0 < 24 || z1 - z0 < 24) continue;
-      const distC = Math.hypot((x0 + x1) / 2, (z0 + z1) / 2) / CITY_HALF;  // 0=都心
-      const park = rng() < 0.06;
-      const house = !park && distC > 0.6 + (rng() - 0.5) * 0.14;           // 郊外は住宅街
-      cityBlocks.push({ x0, x1, z0, z1, park, house, distC, v: rng() < 0.5 });
-    }
-  }
+  // --- 都市プランをシードで選ぶ ---
+  const roll = rng();
+  cityPlan = roll < 0.34 ? 'grid' : roll < 0.67 ? 'organic' : 'radial';
+  if(cityPlan === 'radial') genRadialPlan(rng);
+  else genGridPlan(rng, cityPlan === 'organic');
 
   // --- 地面テクスチャ(時間帯切り替えで再描画するため drawGround に分離) ---
   if(!gCanvas){
@@ -417,65 +682,8 @@ function generateCity(seedStr){
   ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({ map: gTex }));
   cityGroup.add(ground);
 
-  // --- 建物・民家 ---
-  const palette = [0xcfd2d6, 0xd8d2c6, 0xbac4cc, 0xc9c9c2, 0xaab4be, 0xd6cfc2, 0x9aa6b0];
-  const glassPalette = [0xe9eff6, 0xd8e2ec, 0xc6d2e0, 0xe2e8ee, 0xcdd8e2];
-  const housePalette = [0xf0ead8, 0xe6ddca, 0xdcd6c6, 0xd2d8dc, 0xdde2d2, 0xe8d8c0, 0xcfc8b8];
-  for(const blk of cityBlocks){
-    if(blk.park) continue;
-    const w = blk.x1 - blk.x0 - 10, d = blk.z1 - blk.z0 - 10;
-    if(blk.house){
-      // 郊外の住宅街: 小さな区画に民家を並べる
-      const nx = Math.max(1, Math.floor(w / (15 + rng() * 6)));
-      const nz = Math.max(1, Math.floor(d / (15 + rng() * 6)));
-      const cw = w / nx, cd = d / nz;
-      for(let ix = 0; ix < nx; ix++) for(let iz = 0; iz < nz; iz++){
-        if(rng() < 0.13) continue;                        // 空き地
-        const x = blk.x0 + 5 + cw * ix + cw / 2, z = blk.z0 + 5 + cd * iz + cd / 2;
-        if(rng() < 0.05){                                 // たまに低層アパート
-          const sx = Math.max(9, cw - 6), sz = Math.max(9, cd - 6);
-          const h = 9 + rng() * 15;
-          buildings.push({ x, z, gy: groundLevel(x, z, sx, sz), sx, sz, h, rot: 0, k: 0,
-            value: sx * sz * (h / FLOOR_H) * VALUE_PER_M2_FLOOR,
-            color: new THREE.Color(palette[Math.floor(rng() * palette.length)]).offsetHSL(0, 0, (rng() - 0.5) * 0.1),
-            state: 0 });
-        } else {
-          const m = 2.5 + rng() * 2;
-          const sx = Math.min(12, Math.max(6, cw - m * 2)), sz = Math.min(12, Math.max(6, cd - m * 2));
-          const h = 4.5 + rng() * 3.2;
-          buildings.push({ x, z, gy: groundLevel(x, z, sx, sz), sx, sz, h,
-            rot: (rng() < 0.5 ? 0 : Math.PI / 2) + (rng() - 0.5) * 0.09,  // 道路に沿いつつ少し崩す
-            k: rng() < 0.55 ? 2 : 3,
-            value: sx * sz * 2 * 200000,
-            color: new THREE.Color(housePalette[Math.floor(rng() * housePalette.length)]).offsetHSL(0, 0, (rng() - 0.5) * 0.06),
-            state: 0 });
-        }
-      }
-    } else {
-      // ビル街
-      const nx = Math.max(1, Math.min(4, Math.floor(w / (26 + rng() * 26))));
-      const nz = Math.max(1, Math.min(4, Math.floor(d / (26 + rng() * 26))));
-      const cw = w / nx, cd = d / nz;
-      for(let ix = 0; ix < nx; ix++) for(let iz = 0; iz < nz; iz++){
-        if(rng() < 0.10) continue;                        // 空地・駐車場
-        const m = 2 + rng() * 3;
-        const sx = Math.max(10, cw - m * 2), sz = Math.max(10, cd - m * 2);
-        const urban = Math.pow(Math.max(0, 1 - blk.distC), 2);
-        let h = 10 + Math.pow(rng(), 2.2) * (24 + 300 * urban);
-        if(blk.distC < 0.22 && rng() < 0.35) h = 90 + rng() * 190;  // 都心の超高層
-        h = Math.min(h, 300);
-        const glass = rng() < (h > 55 ? 0.6 : 0.12);     // 高層はガラス張りが多い
-        const pal = glass ? glassPalette : palette;
-        const bx = blk.x0 + 5 + cw * ix + cw / 2, bz = blk.z0 + 5 + cd * iz + cd / 2;
-        buildings.push({
-          x: bx, z: bz, gy: groundLevel(bx, bz, sx, sz),
-          sx, sz, h, rot: 0, k: glass ? 1 : 0,
-          value: sx * sz * (h / FLOOR_H) * VALUE_PER_M2_FLOOR,
-          color: new THREE.Color(pal[Math.floor(rng() * pal.length)]).offsetHSL(0, 0, (rng() - 0.5) * 0.1),
-          state: 0 });
-      }
-    }
-  }
+  // --- 建物・民家(プラン生成が出したロットから) ---
+  for(const lot of pendingLots) addBuildingLot(lot, rng);
   // 通し番号と、種類別メッシュ内の番号を採番
   const counts = [0, 0, 0, 0];
   for(let i = 0; i < buildings.length; i++){
@@ -520,19 +728,17 @@ function generateCity(seedStr){
     cityGroup.add(bMeshes[t]);
   }
 
-  // --- 車 ---
+  // --- 車(道路パスに沿って走る) ---
   const carColors = [0xd0d3d8, 0x30343c, 0xa33a2e, 0x3a5d8f, 0xc2b26a, 0x777d88];
-  const allRoads = [];
-  for(const r of roadsV) allRoads.push({ axis: 'x', ...r });
-  for(const r of roadsH) allRoads.push({ axis: 'z', ...r });
   const N_CARS = 460;
   for(let i = 0; i < N_CARS; i++){
-    const r = allRoads[Math.floor(rng() * allRoads.length)];
+    const ri = Math.floor(rng() * roadPaths.length);
+    const rp = roadPaths[ri];
     const dir = rng() < 0.5 ? 1 : -1;
     cars.push({
-      axis: r.axis, coord: r.c, dir,
-      lane: dir * (r.w / 2 - 4 - rng() * (r.major ? 6 : 1)),
-      t: -CITY_HALF + rng() * CITY_HALF * 2,
+      road: ri, dir,
+      lane: dir * (rp.w / 2 - 4 - rng() * (rp.major ? 6 : 1)),
+      s: rng() * (rp.pts.length - 1) * ROAD_STEP,
       speed: 9 + rng() * 12, alive: true, i,
       color: new THREE.Color(carColors[Math.floor(rng() * carColors.length)])
     });
@@ -546,30 +752,25 @@ function generateCity(seedStr){
   cityGroup.add(carMesh);
 
   // --- 公園の木と大通りの並木 ---
-  const nearRoad = (lines, v) => lines.some(l => Math.abs(v - l.c) < l.w / 2 + 5);
-  for(const blk of cityBlocks){
-    if(!blk.park) continue;
-    const area = (blk.x1 - blk.x0) * (blk.z1 - blk.z0);
-    const n = Math.min(28, Math.max(6, Math.floor(area / 900)));
-    for(let k = 0; k < n; k++){
-      trees.push({ x: blk.x0 + 8 + rng() * (blk.x1 - blk.x0 - 16),
-        z: blk.z0 + 8 + rng() * (blk.z1 - blk.z0 - 16), s: 6 + rng() * 5, alive: true });
+  for(const job of parkTreeJobs){
+    for(let k = 0; k < job.n; k++){
+      const pt = job.sample();
+      trees.push({ x: pt.x, z: pt.z, s: 6 + rng() * 5, alive: true });
     }
   }
-  for(const r of roadsV){
-    if(!r.major) continue;
-    for(let t = -CITY_HALF + 25; t < CITY_HALF - 25; t += 30 + rng() * 18){
-      if(rng() < 0.2 || nearRoad(roadsH, t)) continue;   // 交差点上には植えない
-      trees.push({ x: r.c - r.w / 2 - 3.5, z: t, s: 5 + rng() * 4, alive: true });
-      trees.push({ x: r.c + r.w / 2 + 3.5, z: t + 9, s: 5 + rng() * 4, alive: true });
-    }
-  }
-  for(const r of roadsH){
-    if(!r.major) continue;
-    for(let t = -CITY_HALF + 25; t < CITY_HALF - 25; t += 30 + rng() * 18){
-      if(rng() < 0.2 || nearRoad(roadsV, t)) continue;
-      trees.push({ x: t, z: r.c - r.w / 2 - 3.5, s: 5 + rng() * 4, alive: true });
-      trees.push({ x: t + 9, z: r.c + r.w / 2 + 3.5, s: 5 + rng() * 4, alive: true });
+  buildRoadMask();
+  for(const rp of roadPaths){
+    if(!rp.major) continue;
+    const total = (rp.pts.length - 1) * ROAD_STEP;
+    for(let sd = 30; sd < total - 30; sd += 32 + rng() * 18){
+      if(rng() < 0.22) continue;
+      const p = carPose(rp, sd);
+      const off = rp.w / 2 + 3.5;
+      for(const sgn of [1, -1]){
+        const tx = p.x + p.dz * off * sgn, tz = p.z - p.dx * off * sgn;
+        if(Math.abs(tx) > 2550 || Math.abs(tz) > 2550 || onRoad(tx, tz)) continue;  // 交差点上には植えない
+        trees.push({ x: tx, z: tz, s: 5 + rng() * 4, alive: true });
+      }
     }
   }
   const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4f3a });
@@ -590,6 +791,8 @@ function generateCity(seedStr){
   cityGroup.add(treeMesh);
 
   stats.bTotal = buildings.length;
+  document.getElementById('planName').textContent =
+    '都市プラン: ' + ({ grid: '碁盤目', organic: '有機的街路', radial: '放射環状' })[cityPlan];
   updateHUD(true);
 }
 
@@ -600,17 +803,34 @@ function drawGround(){
   const G = TIMES[timeMode].ground, g = gCtx;
   g.setLineDash([]);
   g.fillStyle = G.base; g.fillRect(0, 0, TEX, TEX);
-  for(const b of cityBlocks){
-    g.fillStyle = G.sidewalk;
-    g.fillRect(w2c(b.x0), w2c(b.z0), (b.x1 - b.x0) * s, (b.z1 - b.z0) * s);
-    g.fillStyle = b.park ? G.park : (b.house ? G.house : (b.v ? G.block1 : G.block2));
-    g.fillRect(w2c(b.x0 + 5), w2c(b.z0 + 5), (b.x1 - b.x0 - 10) * s, (b.z1 - b.z0 - 10) * s);
+  // 街区の塗り分け
+  for(const poly of groundPolys){
+    g.beginPath();
+    poly.pts.forEach((p, i) => i ? g.lineTo(w2c(p.x), w2c(p.z)) : g.moveTo(w2c(p.x), w2c(p.z)));
+    g.closePath();
+    g.fillStyle = poly.kind === 'park' ? G.park : poly.kind === 'house' ? G.house : (poly.v ? G.block1 : G.block2);
+    g.fill();
   }
-  g.strokeStyle = G.lane; g.lineWidth = 1; g.setLineDash([6, 8]);
-  for(const r of roadsV){ if(!r.major) continue;
-    g.beginPath(); g.moveTo(w2c(r.c), 0); g.lineTo(w2c(r.c), TEX); g.stroke(); }
-  for(const r of roadsH){ if(!r.major) continue;
-    g.beginPath(); g.moveTo(0, w2c(r.c)); g.lineTo(TEX, w2c(r.c)); g.stroke(); }
+  // 道路: 歩道の帯 → アスファルト → センターライン の順に重ねる
+  const strokeRoad = (rp, width, style) => {
+    g.strokeStyle = style; g.lineWidth = Math.max(1, width * s);
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    g.beginPath();
+    rp.pts.forEach((p, i) => i ? g.lineTo(w2c(p.x), w2c(p.z)) : g.moveTo(w2c(p.x), w2c(p.z)));
+    if(rp.loop) g.closePath();
+    g.stroke();
+  };
+  for(const rp of roadPaths) strokeRoad(rp, rp.w + 11, G.sidewalk);
+  for(const rp of roadPaths) strokeRoad(rp, rp.w, G.asphalt);
+  g.setLineDash([6, 8]);
+  g.lineWidth = 1; g.strokeStyle = G.lane;
+  for(const rp of roadPaths){
+    if(!rp.major) continue;
+    g.beginPath();
+    rp.pts.forEach((p, i) => i ? g.lineTo(w2c(p.x), w2c(p.z)) : g.moveTo(w2c(p.x), w2c(p.z)));
+    if(rp.loop) g.closePath();
+    g.stroke();
+  }
   g.setLineDash([]);
   gTex.needsUpdate = true;
 }
@@ -1288,8 +1508,9 @@ function destroyAround(p, R, depth = 0, wave = 0){
   const CR = R * 1.25;
   for(const c of cars){
     if(!c.alive) continue;
-    const px = c.axis === 'x' ? c.coord + c.lane : c.t;
-    const pz = c.axis === 'x' ? c.t : c.coord + c.lane;
+    const pose = carPose(roadPaths[c.road], c.s);
+    const px = pose.x + pose.dz * c.lane;
+    const pz = pose.z - pose.dx * c.lane;
     if(Math.hypot(px - p.x, pz - p.z) <= CR){
       c.alive = false;
       dummy.position.set(0, -50, 0); dummy.scale.set(0.001, 0.001, 0.001); dummy.rotation.set(0, 0, 0);
@@ -1424,20 +1645,15 @@ function updateFx(dt){
   }
 }
 
-// ---------- 車の走行 ----------
+// ---------- 車の走行(道路パスに沿う) ----------
 function updateCars(dt){
   for(const c of cars){
     if(!c.alive) continue;
-    c.t += c.speed * c.dir * dt;
-    if(c.t > CITY_HALF) c.t = -CITY_HALF;
-    if(c.t < -CITY_HALF) c.t = CITY_HALF;
-    if(c.axis === 'x'){
-      dummy.position.set(c.coord + c.lane, terrainH(c.coord + c.lane, c.t) + 1.1, c.t);
-      dummy.rotation.set(0, Math.PI / 2, 0);
-    } else {
-      dummy.position.set(c.t, terrainH(c.t, c.coord + c.lane) + 1.1, c.coord + c.lane);
-      dummy.rotation.set(0, 0, 0);
-    }
+    c.s += c.speed * c.dir * dt;
+    const p = carPose(roadPaths[c.road], c.s);
+    const px = p.x + p.dz * c.lane, pz = p.z - p.dx * c.lane;   // 進行方向の横にレーンオフセット
+    dummy.position.set(px, terrainH(px, pz) + 1.1, pz);
+    dummy.rotation.set(0, Math.atan2(-p.dz * c.dir, p.dx * c.dir), 0);
     dummy.scale.set(1, 1, 1);
     dummy.updateMatrix();
     carMesh.setMatrixAt(c.i, dummy.matrix);

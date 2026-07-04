@@ -898,7 +898,6 @@ function generateCity(seedStr){
   }
   gTex = new THREE.CanvasTexture(gCanvas);
   gTex.anisotropy = 8;
-  drawGround();
   const groundGeo = new THREE.PlaneGeometry(5400, 5400, 96, 96);
   groundGeo.rotateX(-Math.PI / 2);
   const gp = groundGeo.getAttribute('position');
@@ -909,6 +908,7 @@ function generateCity(seedStr){
 
   // --- 建物・民家(プラン生成が出したロットから) ---
   for(const lot of pendingLots) addBuildingLot(lot, rng);
+  drawGround();   // ポケットパーク等の区画装飾はロット生成で決まるため、この後に描く
   // 通し番号と、種類別メッシュ内の番号を採番
   const counts = [0, 0, 0, 0];
   for(let i = 0; i < buildings.length; i++){
@@ -1002,7 +1002,7 @@ function generateCity(seedStr){
     }
   }
   const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4f3a });
-  const leafCols = [0x77a05c, 0x49764a, 0x7da35a];
+  const leafCols = [0x4c7a36, 0x2f5a33, 0x53823a];   // 濃い緑(広葉樹 / 針葉樹 / ポプラ型)
   const treeGeos = makeTreeGeometries();
   const tCounts = [0, 0, 0];
   for(const t of trees) t.mi = tCounts[t.type]++;
@@ -1019,7 +1019,7 @@ function generateCity(seedStr){
     dummy.scale.set(t.s * t.w, t.s, t.s * t.w);
     dummy.updateMatrix();
     treeMeshes[t.type].setMatrixAt(t.mi, dummy.matrix);
-    treeMeshes[t.type].setColorAt(t.mi, new THREE.Color(1, 1, 1).offsetHSL((rng() - 0.5) * 0.07, 0, (rng() - 0.5) * 0.18));
+    treeMeshes[t.type].setColorAt(t.mi, new THREE.Color(1, 1, 1).offsetHSL((rng() - 0.5) * 0.06, 0, (rng() - 0.5) * 0.1 - 0.02));
   }
   for(let ti = 0; ti < 3; ti++){
     if(tCounts[ti]) treeMeshes[ti].instanceColor.needsUpdate = true;

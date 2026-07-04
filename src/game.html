@@ -581,7 +581,7 @@ function genGridPlan(rng, organic){
       if(u1 - u0 < 24 || v1 - v0 < 24) continue;
       const wc = warp((u0 + u1) / 2, (v0 + v1) / 2);
       const distC = Math.hypot(wc.x, wc.z) / CITY_HALF;
-      const park = rng() < 0.06;
+      const park = rng() < 0.03;
       const house = !park && distC > 0.6 + (rng() - 0.5) * 0.14;
       // 塗り用ポリゴン(縁を分割してからワープすると曲線に沿う)
       const poly = [], step = 45;
@@ -685,7 +685,7 @@ function genRadialPlan(rng){
       const aB = s0.a + gap - (s1.w / 2 + 5) / rm;
       if(aB - aA < 24 / rm) continue;
       const distC = rm / CITY_HALF;
-      const park = rng() < 0.05;
+      const park = rng() < 0.025;
       const house = !park && distC > 0.6 + (rng() - 0.5) * 0.14;
       const poly = [];
       const nA = Math.max(4, Math.round((aB - aA) * rOut / 40));

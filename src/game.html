@@ -260,7 +260,7 @@ let lotDecals = [];      // 駐車場などの区画装飾 {x,z,rot,w,d}
 let noiseCanvas = null;  // 地面の質感ノイズ(シード決定)
 let cityPlan = 'grid';   // 'grid' | 'organic' | 'radial' (シードで決まる)
 let pendingLots = [], parkTreeJobs = [];   // プラン生成 → 建物/木生成への受け渡し
-let bMeshes = [];        // 種類別メッシュ [0:コンクリビル, 1:ガラスビル, 2:民家(赤屋根), 3:民家(スレート屋根)]
+let bMeshes = [];        // 種類別メッシュ [0:コンクリビル, 1:ガラスビル, 2以降:民家(屋根色別)]
 let treeMeshes = [];     // 樹種別 [0:広葉樹, 1:針葉樹, 2:ポプラ型]
 let carMesh = null, ground = null;
 let gCanvas = null, gCtx = null, gTex = null;
@@ -449,9 +449,14 @@ function genRoadLines(rng){
 }
 
 // ---------- 建物パレットとロット → 建物の変換 ----------
-const PAL_CON = [0xcfd2d6, 0xd8d2c6, 0xbac4cc, 0xc9c9c2, 0xaab4be, 0xd6cfc2, 0x9aa6b0];
-const PAL_GLA = [0xe9eff6, 0xd8e2ec, 0xc6d2e0, 0xe2e8ee, 0xcdd8e2];
-const PAL_HOU = [0xf0ead8, 0xe6ddca, 0xdcd6c6, 0xd2d8dc, 0xdde2d2, 0xe8d8c0, 0xcfc8b8];
+const PAL_CON = [0xcfd2d6, 0xd8d2c6, 0xbac4cc, 0xc9c9c2, 0xaab4be, 0xd6cfc2, 0x9aa6b0,
+  0xb9a88f, 0x8f9a8b, 0xa5988a, 0x93a0a8, 0xc2b6a0, 0x847e74, 0xbfae9c];      // ベージュ・煉瓦・緑灰なども
+const PAL_GLA = [0xe9eff6, 0xd8e2ec, 0xc6d2e0, 0xe2e8ee, 0xcdd8e2,
+  0xbfd8d2, 0xaebfd8, 0xd8e4da, 0x9fb4cf];                                     // ティール・スチールブルー系
+const PAL_HOU = [0xf0ead8, 0xe6ddca, 0xdcd6c6, 0xd2d8dc, 0xdde2d2, 0xe8d8c0, 0xcfc8b8,
+  0xe8d4d0, 0xd4dde6, 0xd8e4d4, 0xefe2b8, 0xcfc4b2];                           // 淡いピンク・水色・ミントなど
+const ROOF_COLS = [0x9a5648, 0x55616c, 0x4a6250, 0x3f4145, 0xa96a3f, 0x6e5a48]; // 屋根: 赤茶/スレート/深緑/炭/オレンジ/焦茶
+const HOUSE_K0 = 2;   // bMeshes内で民家メッシュが始まるインデックス
 
 // ロットの縁(建物の隙間)に木を植える。anywhereなら区画全体に
 function yardTrees(lot, n, rng, anywhere){
@@ -499,7 +504,7 @@ function addBuildingLot(lot, rng){
       const h = 4.5 + rng() * 3.2;
       buildings.push({ x, z, gy: groundLevel(x, z, sx, sz), sx, sz, h,
         rot: rot + (rng() < 0.5 ? 0 : Math.PI / 2) + (rng() - 0.5) * 0.09,
-        k: rng() < 0.55 ? 2 : 3,
+        k: HOUSE_K0 + Math.floor(rng() * ROOF_COLS.length),
         value: sx * sz * 2 * 200000,
         color: new THREE.Color(PAL_HOU[Math.floor(rng() * PAL_HOU.length)]).offsetHSL(0, 0, (rng() - 0.5) * 0.06),
         state: 0 });
@@ -790,7 +795,7 @@ function generateCity(seedStr){
   for(const lot of pendingLots) addBuildingLot(lot, rng);
   drawGround();   // ポケットパーク等の区画装飾はロット生成で決まるため、この後に描く
   // 通し番号と、種類別メッシュ内の番号を採番
-  const counts = [0, 0, 0, 0];
+  const counts = new Array(HOUSE_K0 + ROOF_COLS.length).fill(0);
   for(let i = 0; i < buildings.length; i++){
     const b = buildings[i];
     b.i = i;
@@ -810,15 +815,13 @@ function generateCity(seedStr){
   const glaMat = mkFacade(makeGlassTexture(rng), 1.2);
   const houMat = mkFacade(makeHouseTexture(rng), 0.8);
   const roofTopMat = new THREE.MeshLambertMaterial({ color: 0x484c53 });
-  const roofRed = new THREE.MeshLambertMaterial({ color: 0x9a5648 });
-  const roofSlate = new THREE.MeshLambertMaterial({ color: 0x55616c });
   const towerGeo = makeTowerGeometry();
   const houseGeo = makeHouseGeometry();
   bMeshes = [
     new THREE.InstancedMesh(towerGeo, [conMat, roofTopMat], counts[0]),
     new THREE.InstancedMesh(towerGeo, [glaMat, roofTopMat], counts[1]),
-    new THREE.InstancedMesh(houseGeo, [houMat, roofRed], counts[2]),
-    new THREE.InstancedMesh(houseGeo, [houMat, roofSlate], counts[3]),
+    ...ROOF_COLS.map((c, ri) => new THREE.InstancedMesh(houseGeo,
+      [houMat, new THREE.MeshLambertMaterial({ color: c })], counts[HOUSE_K0 + ri])),
   ];
   for(const m of bMeshes) m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   for(const b of buildings){
@@ -828,7 +831,7 @@ function generateCity(seedStr){
     if(!grid.has(k)) grid.set(k, []);
     grid.get(k).push(b.i);
   }
-  for(let t = 0; t < 4; t++){
+  for(let t = 0; t < bMeshes.length; t++){
     if(counts[t]) bMeshes[t].instanceColor.needsUpdate = true;
     cityGroup.add(bMeshes[t]);
   }

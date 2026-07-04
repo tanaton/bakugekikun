@@ -852,12 +852,11 @@ function generateCity(seedStr){
   for(const job of parkTreeJobs){
     for(let k = 0; k < job.n; k++){
       const pt = job.sample();
-      pushTree(pt.x, pt.z, 5 + rng() * 8, rng() < 0.6 ? 0 : (rng() < 0.6 ? 1 : 2), rng);
+      pushTree(pt.x, pt.z, 5 + rng() * 8, Math.floor(rng() * 3), rng);
     }
   }
   buildRoadMask();
   for(const rp of roadPaths){
-    const streetType = rng() < 0.7 ? 0 : 2;              // 通りごとに樹種を揃える
     let spacing, skip;
     if(rp.major){ spacing = 24; skip = 0.15; }
     else if(rng() < 0.45){ spacing = 46; skip = 0.35; }  // 生活道路にもまばらに
@@ -870,7 +869,7 @@ function generateCity(seedStr){
       for(const sgn of [1, -1]){
         const tx = p.x + p.dz * off * sgn, tz = p.z - p.dx * off * sgn;
         if(Math.abs(tx) > 2550 || Math.abs(tz) > 2550 || onRoad(tx, tz)) continue;  // 交差点上には植えない
-        pushTree(tx, tz, 4.5 + rng() * 4, streetType, rng);
+        pushTree(tx, tz, 4.5 + rng() * 4, Math.floor(rng() * 3), rng);  // 樹形は1本ごとにランダム
       }
     }
   }

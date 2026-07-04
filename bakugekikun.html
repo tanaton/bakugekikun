@@ -574,7 +574,8 @@ const PAL_CON = [0xcfd2d6, 0xd8d2c6, 0xbac4cc, 0xc9c9c2, 0xaab4be, 0xd6cfc2, 0x9
 const PAL_GLA = [0xe9eff6, 0xd8e2ec, 0xc6d2e0, 0xe2e8ee, 0xcdd8e2,
   0xbfd8d2, 0xaebfd8, 0xd8e4da, 0x9fb4cf];                                     // ティール・スチールブルー系
 const PAL_HOU = [0xf0ead8, 0xe6ddca, 0xdcd6c6, 0xd2d8dc, 0xdde2d2, 0xe8d8c0, 0xcfc8b8,
-  0xe8d4d0, 0xd4dde6, 0xd8e4d4, 0xefe2b8, 0xcfc4b2];                           // 淡いピンク・水色・ミントなど
+  0xe8d4d0, 0xd4dde6, 0xd8e4d4, 0xefe2b8, 0xcfc4b2,                            // 淡いピンク・水色・ミントなど
+  0xf5f2ea, 0xe0cdb8, 0xd9cfe0, 0xc9d2c2, 0xe4c8b0, 0xd8d8d8, 0xc8bfae, 0xe6d2a8]; // 白・サンド・ラベンダー・セージ・テラコッタ・グレー系
 const ROOF_COLS = [0x9a5648, 0x55616c, 0x4a6250, 0x3f4145, 0xa96a3f, 0x6e5a48]; // 屋根: 赤茶/スレート/深緑/炭/オレンジ/焦茶
 const HOUSE_K0 = 2;   // bMeshes内で民家メッシュが始まるインデックス
 
@@ -626,7 +627,7 @@ function addBuildingLot(lot, rng){
         rot: rot + (rng() < 0.5 ? 0 : Math.PI / 2) + (rng() - 0.5) * 0.09,
         k: HOUSE_K0 + Math.floor(rng() * ROOF_COLS.length),
         value: sx * sz * 2 * 200000,
-        color: new THREE.Color(PAL_HOU[Math.floor(rng() * PAL_HOU.length)]).offsetHSL(0, 0, (rng() - 0.5) * 0.06),
+        color: new THREE.Color(PAL_HOU[Math.floor(rng() * PAL_HOU.length)]).offsetHSL((rng() - 0.5) * 0.03, 0, (rng() - 0.5) * 0.09),
         state: 0 });
       if(rng() < 0.55) yardTrees(lot, 1 + Math.floor(rng() * 2), rng);  // 庭木
     }

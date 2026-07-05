@@ -695,8 +695,8 @@ function addBuildingLot(lot, rng){
       if(rng() < 0.55) yardTrees(lot, 1 + Math.floor(rng() * 2), rng);  // 庭木
     }
   } else {
-    if(rng() < 0.16){                                    // 空地: 駐車場かポケットパーク
-      if(rng() < 0.45){
+    if(rng() < 0.11){                                    // 空地: 駐車場かポケットパーク
+      if(rng() < 0.30){
         lotDecals.push({ x, z, rot, w: Math.max(8, availW - 4), d: Math.max(8, availD - 4), kind: 'parking' });
       } else {
         // ビルの隙間の小公園: 緑地 + 森のような植栽
@@ -1109,11 +1109,35 @@ function generateCity(seedStr){
       color: new THREE.Color(carColors[Math.floor(rng() * carColors.length)])
     });
   }
+  // 駐車場の停車中の車(動かない)。区画のローカル座標で列に並べる
+  for(const dcl of lotDecals){
+    if(dcl.kind !== 'parking') continue;
+    const cosr = Math.cos(dcl.rot), sinr = Math.sin(dcl.rot);
+    for(let lz = -dcl.d / 2 + 3.2; lz <= dcl.d / 2 - 3.2; lz += 11){    // 列: 枠5.5 + 通路
+      for(let lx = -dcl.w / 2 + 2; lx <= dcl.w / 2 - 2; lx += 3.4){     // 枠のピッチ
+        if(rng() < 0.45) continue;                                      // 空き枠
+        const x = dcl.x + lx * cosr + lz * sinr;
+        const z = dcl.z - lx * sinr + lz * cosr;
+        cars.push({ parked: true, alive: true, i: cars.length, px: x, pz: z,
+          rot: dcl.rot + Math.PI / 2, y: terrainH(x, z) + 1,
+          color: new THREE.Color(carColors[Math.floor(rng() * carColors.length)]) });
+      }
+    }
+  }
   carMesh = new THREE.InstancedMesh(
     new THREE.BoxGeometry(4.6, 2, 2.2),
-    new THREE.MeshLambertMaterial({ color: 0xffffff }), N_CARS);
+    new THREE.MeshLambertMaterial({ color: 0xffffff }), cars.length);
   carMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  for(const c of cars) carMesh.setColorAt(c.i, c.color);
+  for(const c of cars){
+    carMesh.setColorAt(c.i, c.color);
+    if(c.parked){                       // 停車中の車は行列を一度だけ焼き込む
+      dummy.position.set(c.px, c.y, c.pz);
+      dummy.rotation.set(0, c.rot, 0);
+      dummy.scale.set(1, 1, 1);         // dummyは使い回しなのでスケールをリセット
+      dummy.updateMatrix();
+      carMesh.setMatrixAt(c.i, dummy.matrix);
+    }
+  }
   carMesh.instanceColor.needsUpdate = true;
   cityGroup.add(carMesh);
 
@@ -2201,7 +2225,7 @@ function updateCars(dt){
   // 残りの要素は生成時の単位行列のまま変わらない
   const arr = carMesh.instanceMatrix.array;
   for(const c of cars){
-    if(!c.alive) continue;
+    if(!c.alive || c.parked) continue;
     c.s += c.speed * c.dir * dt;
     const p = carPose(roadPaths[c.road], c.s);
     const px = p.x + p.dz * c.lane, pz = p.z - p.dx * c.lane;   // 進行方向の横にレーンオフセット

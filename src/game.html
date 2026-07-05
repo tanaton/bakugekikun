@@ -53,14 +53,15 @@ function terrainH(x, z){
   const distC = Math.hypot(x - cityCore.x, z - cityCore.z) / CITY_HALF;
   const flat = 0.25 + 0.75 * Math.min(1, Math.max(0, (distC - 0.15) / 0.75)); // 都心部は平坦
   let hh = h * tAmp * flat;
-  // 地形フィーチャ(隅の山・湾 / 辺全体の山脈・水辺)
+  // 地形フィーチャ: 山は隆起、水域は固定水面レベルへ平坦化ブレンド
+  let wb = 0;   // 水面ブレンド率(1=完全な水面)
   for(const f of cornerFeats){
     if(f.kind === 'band'){
       const du = bandDu(f, x, z);                        // 縁からの内向き距離
       if(f.type === 'm'){
         if(du < f.depth){ const k = 1 - du / f.depth; hh += f.amp * k * k; }
-      } else {
-        if(du < f.off + 60) hh -= 14 * Math.min(1, (f.off + 60 - du) / 120);
+      } else if(du < f.off + 90){
+        wb = Math.max(wb, Math.min(1, (f.off + 90 - du) / 140));
       }
       continue;
     }
@@ -68,16 +69,52 @@ function terrainH(x, z){
     if(f.type === 'm'){
       const t = d / f.r;
       if(t < 1){ const k = 1 - t * t; hh += f.amp * k * k; }
-    } else {
-      // 湾: 岸から水底へ掘り下げる
-      if(d < f.r + 60) hh -= 14 * Math.min(1, (f.r + 60 - d) / 120);
+    } else if(d < f.r + 90){
+      wb = Math.max(wb, Math.min(1, (f.r + 90 - d) / 140));
     }
   }
+  if(wb > 0) hh = hh * (1 - wb) + (-12) * wb;   // 水面は起伏の影響を受けず平坦
   return hh;
 }
 // 帯状フィーチャにおける、地図の縁からの内向き距離
 function bandDu(f, x, z){
   return 2500 - (f.axis === 'x' ? x * f.side : z * f.side);
+}
+// フィーチャfの影響領域に点が入っているか
+function featRegion(f, x, z){
+  if(f.kind === 'band'){
+    const du = bandDu(f, x, z);
+    return f.type === 'm' ? du < f.depth : du < f.off + 30;
+  }
+  const d = Math.hypot(x - f.x, z - f.z);
+  return f.type === 'm' ? d < f.r : d < f.r + 30;
+}
+// 候補フィーチャが既存の「逆タイプ」(山⇔水)と重なるか。同種同士の連なりは許可
+function featConflicts(cand){
+  const pts = [];
+  if(cand.kind === 'disc'){
+    pts.push([cand.x, cand.z]);
+    for(let i = 0; i < 16; i++){
+      const a = i / 16 * Math.PI * 2;
+      pts.push([cand.x + Math.cos(a) * cand.r * 0.55, cand.z + Math.sin(a) * cand.r * 0.55]);
+      pts.push([cand.x + Math.cos(a) * cand.r * 0.98, cand.z + Math.sin(a) * cand.r * 0.98]);
+    }
+  } else {
+    const dep = cand.type === 'm' ? cand.depth : cand.off + 20;
+    for(let t = -2500; t <= 2500; t += 250){
+      for(const du of [10, dep * 0.5, dep * 0.95]){
+        pts.push(cand.axis === 'x' ? [cand.side * (2500 - du), t] : [t, cand.side * (2500 - du)]);
+      }
+    }
+  }
+  for(const f of cornerFeats){
+    if(f.type === cand.type) continue;
+    for(const [px, pz] of pts){
+      if(Math.abs(px) > 2700 || Math.abs(pz) > 2700) continue;
+      if(featRegion(f, px, pz)) return true;
+    }
+  }
+  return false;
 }
 // 地形フィーチャで建物が建てられない場所か(山腹・水辺)
 function cornerBlocked(x, z){
@@ -925,24 +962,28 @@ function generateCity(seedStr){
   const corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
   for(const [sx, sz] of corners){
     const roll = rng(), fr = rng(), fp = rng(), ph = rng() * Math.PI * 2;
+    let cand = null;
     if(roll < 0.34){
-      cornerFeats.push({ type: 'm', kind: 'disc', x: sx * 2500, z: sz * 2500,
-        r: 1100 + fr * 650, amp: 170 + fp * 260 });
+      cand = { type: 'm', kind: 'disc', x: sx * 2500, z: sz * 2500,
+        r: 1100 + fr * 650, amp: 170 + fp * 260 };
     } else if(roll < 0.67){
-      cornerFeats.push({ type: 'r', kind: 'disc', x: sx * 2500, z: sz * 2500,
-        r: 700 + fr * 600, wig: 30 + fp * 50, ph });
+      cand = { type: 'r', kind: 'disc', x: sx * 2500, z: sz * 2500,
+        r: 700 + fr * 600, wig: 30 + fp * 50, ph };
     }
+    if(cand && !featConflicts(cand)) cornerFeats.push(cand);   // 山と水は重ねない
   }
   const edges = [['z', -1], ['z', 1], ['x', -1], ['x', 1]];   // [軸, どちらの縁か]
   for(const [axis, side] of edges){
     const roll = rng(), fr = rng(), fp = rng(), ph = rng() * Math.PI * 2;
+    let cand = null;
     if(roll < 0.22){
-      cornerFeats.push({ type: 'm', kind: 'band', axis, side,
-        depth: 500 + fr * 450, amp: 170 + fp * 260 });
+      cand = { type: 'm', kind: 'band', axis, side,
+        depth: 500 + fr * 450, amp: 170 + fp * 260 };
     } else if(roll < 0.44){
-      cornerFeats.push({ type: 'r', kind: 'band', axis, side,
-        off: 230 + fr * 300, wig: 30 + fp * 50, ph });
+      cand = { type: 'r', kind: 'band', axis, side,
+        off: 230 + fr * 300, wig: 30 + fp * 50, ph };
     }
+    if(cand && !featConflicts(cand)) cornerFeats.push(cand);
   }
   buildTerrain(rng);               // 起伏もシードで決まる
 

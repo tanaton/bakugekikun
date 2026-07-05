@@ -5254,7 +5254,9 @@ function generateCity(seedStr){
   const nfEl = $('nukeFlash');
   nfEl.style.transition = 'none'; nfEl.style.opacity = '0';
   clearDebris();
-  scorchList.length = 0;   // 実体は旧cityGroupと一緒に破棄済み
+  // 焦げ跡は実体が旧cityGroupと一緒に破棄済みなので追跡用リストだけ空にする
+  scorchList.length = 0; scorchPending.clear();
+  scorchBatches.length = 0; scorchBakedCount = 0;
   for(const L of boomLights) L.intensity = 0;
   fireP.clear(); smokeP.clear();
   stats.bDead = 0; stats.cDead = 0; stats.tDead = 0; stats.mCount = 0; stats.damage = 0; stats.shown = 0;
@@ -5975,9 +5977,51 @@ const scorchMat = makeScorchMaterial(4, [
   [0, 'rgba(8,8,8,0.9)'], [0.45, 'rgba(12,11,9,0.78)'], [0.75, 'rgba(16,13,11,0.4)'], [1, 'rgba(20,16,12,0)']]);
 const nukeScorchMat = makeScorchMaterial(6, [
   [0, 'rgba(8,8,8,0.92)'], [0.55, 'rgba(14,12,10,0.75)'], [1, 'rgba(20,16,12,0)']]);
-// 表示中の焦げ跡(古い順)。無制限に増やすとドローコールと透明オーバードローが蓄積するため上限を設ける
+// 表示中の焦げ跡(古い順)。個別メッシュのまま無制限に増やすとドローコールが蓄積するため、
+// 直近の分だけ個別メッシュで保持し、あふれた分は複数枚を1メッシュに焼き込んで統合する。
+// 統合後も含めて合計約1000発分が残る(超過分は統合メッシュ単位で古い順に破棄)
 const scorchList = [];
-const SCORCH_MAX = 60;
+const SCORCH_LIVE_MAX = 40;    // 個別メッシュのまま保持する枚数
+const SCORCH_BAKE_SIZE = 48;   // この枚数たまるごとに1メッシュへ統合
+const SCORCH_BAKED_MAX = 960;  // 統合メッシュ側に保持する合計枚数の上限
+const scorchPending = new Map();   // material → 統合待ちの個別メッシュ
+const scorchBatches = [];          // { mesh, count } 古い順
+let scorchBakedCount = 0;
+// 統合待ちの個別メッシュ群を1つのジオメトリへ焼き込む(頂点はワールド座標に変換済みで格納)
+function bakeScorchBatch(mat, list){
+  let vCount = 0, iCount = 0;
+  for(const m of list){ vCount += m.geometry.getAttribute('position').count; iCount += m.geometry.index.count; }
+  const pos = new Float32Array(vCount * 3), uv = new Float32Array(vCount * 2);
+  const idx = vCount > 65535 ? new Uint32Array(iCount) : new Uint16Array(iCount);
+  let vo = 0, io = 0;
+  for(const m of list){
+    const p = m.geometry.getAttribute('position'), u = m.geometry.getAttribute('uv'), ix = m.geometry.index;
+    for(let i = 0; i < p.count; i++){
+      pos[(vo + i) * 3]     = p.getX(i) + m.position.x;
+      pos[(vo + i) * 3 + 1] = p.getY(i) + m.position.y;
+      pos[(vo + i) * 3 + 2] = p.getZ(i) + m.position.z;
+      uv[(vo + i) * 2] = u.getX(i); uv[(vo + i) * 2 + 1] = u.getY(i);
+    }
+    for(let i = 0; i < ix.count; i++) idx[io + i] = ix.getX(i) + vo;
+    vo += p.count; io += ix.count;
+    cityGroup.remove(m);
+    m.geometry.dispose();
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  const mesh = new THREE.Mesh(g, mat);
+  cityGroup.add(mesh);
+  scorchBatches.push({ mesh, count: list.length });
+  scorchBakedCount += list.length;
+  while(scorchBakedCount > SCORCH_BAKED_MAX){
+    const b = scorchBatches.shift();
+    cityGroup.remove(b.mesh);
+    b.mesh.geometry.dispose();
+    scorchBakedCount -= b.count;
+  }
+}
 // 焦げ跡デカール: 内部にも頂点を持つ格子を地形に沿わせて密着させる
 function addScorch(p, gy, size, segs, lift, mat){
   const sg = new THREE.PlaneGeometry(size, size, segs, segs);
@@ -5992,10 +6036,16 @@ function addScorch(p, gy, size, segs, lift, mat){
   mesh.position.set(p.x, gy, p.z);
   cityGroup.add(mesh);
   scorchList.push(mesh);
-  if(scorchList.length > SCORCH_MAX){   // 最も古い跡から消す(マテリアルは共用なのでジオメトリだけ破棄)
+  if(scorchList.length > SCORCH_LIVE_MAX){
     const old = scorchList.shift();
-    cityGroup.remove(old);
-    old.geometry.dispose();
+    // 表示したまま統合待ちへ回し、規定枚数たまったら1メッシュに焼き込む(マテリアル別)
+    let pend = scorchPending.get(old.material);
+    if(!pend) scorchPending.set(old.material, pend = []);
+    pend.push(old);
+    if(pend.length >= SCORCH_BAKE_SIZE){
+      bakeScorchBatch(old.material, pend);
+      pend.length = 0;
+    }
   }
 }
 

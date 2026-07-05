@@ -1163,15 +1163,22 @@ function generateCity(seedStr){
       }
     }
   }
-  // 山は公園以上の密度の森に覆われる(試行は円全体、地図外はスキップ)
+  // 山は公園以上の密度の森に覆われる(地図内の実面積を推定して本数を決める)
   for(const f of cornerFeats){
     if(f.type !== 'm') continue;
-    const n = Math.min(24000, Math.round(Math.PI * f.r * f.r / 170));
-    for(let k = 0; k < n; k++){
+    let inMap = 0;
+    for(let k = 0; k < 128; k++){
+      const a = rng() * Math.PI * 2, rr = Math.sqrt(rng()) * f.r * 0.95;
+      if(Math.abs(f.x + Math.cos(a) * rr) <= 2560 && Math.abs(f.z + Math.sin(a) * rr) <= 2560) inMap++;
+    }
+    const target = Math.min(20000, Math.round(Math.PI * f.r * f.r * (inMap / 128) / 105));
+    let placed = 0;
+    for(let k = 0; k < target * 4 && placed < target; k++){
       const a = rng() * Math.PI * 2, rr = Math.sqrt(rng()) * f.r * 0.95;
       const tx = f.x + Math.cos(a) * rr, tz = f.z + Math.sin(a) * rr;
       if(Math.abs(tx) > 2560 || Math.abs(tz) > 2560 || onRoad(tx, tz)) continue;
       pushTree(tx, tz, 6 + rng() * 7, Math.floor(rng() * 3), rng);
+      placed++;
     }
   }
   const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4f3a });

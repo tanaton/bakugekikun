@@ -87,13 +87,14 @@
     <div class="seedrow"><button id="timeBtn" style="flex:1" title="昼と夕暮れを切り替え">時間帯: 昼</button></div>
     <div class="seedrow"><button id="weaponBtn" style="flex:1" title="右クリックで発射する弾種を切り替え">弾種: 単弾頭ミサイル</button></div>
     <div class="label" id="planName" style="margin-top:8px">都市プラン: —</div>
+    <div class="label" id="perf" style="margin-top:4px">— fps</div>
   </div>
 
   <div class="panel" id="report">
     <div class="label">Damage Report — 被害報告</div>
     <div class="row"><span class="label">破壊建物</span><span class="num"><span id="bDead">0</span> / <span id="bTotal">0</span><small>棟</small></span></div>
-    <div class="row"><span class="label">破壊車両</span><span class="num"><span id="cDead">0</span><small>台</small></span></div>
-    <div class="row"><span class="label">破壊樹木</span><span class="num"><span id="tDead">0</span><small>本</small></span></div>
+    <div class="row"><span class="label">破壊車両</span><span class="num"><span id="cDead">0</span> / <span id="cTotal">0</span><small>台</small></span></div>
+    <div class="row"><span class="label">破壊樹木</span><span class="num"><span id="tDead">0</span> / <span id="tTotal">0</span><small>本</small></span></div>
     <div class="row"><span class="label">出撃ミサイル</span><span class="num"><span id="mCount">0</span><small>発</small></span></div>
     <div class="divider"></div>
     <div class="row"><span class="label">被害総額</span><span class="num" id="dmgTotal">¥0</span></div>
@@ -4625,7 +4626,7 @@ function makeHouseTexture(rng){
 let buildings = [];      // {x,z,sx,sz,h,rot,value,state,k(種類),i,mi}
 let cars = [];           // {road,s,dir,lane,speed,alive,i,color}
 let trees = [];          // {x,z,s,alive,i}
-let roadPaths = [];      // {pts:[{x,z}] 等間隔ROAD_STEP, w, major, loop}
+let roadPaths = [];      // {pts:[{x,z,h,hs}] 等間隔ROAD_STEP, w, major, loop} h=路面高, hs=横断勾配
 let groundPolys = [];    // 地面の塗り分けポリゴン {pts, kind:'park'|'house'|'block', v}
 let alleyPaths = [];     // 街区内の細街路 {pts, w}
 let lotDecals = [];      // 駐車場などの区画装飾 {x,z,rot,w,d}
@@ -4782,7 +4783,7 @@ function resamplePath(raw, loop){
   return pts;
 }
 
-// パス上の距離sにおける位置と進行方向
+// パス上の距離sにおける位置と進行方向(h/hsは事前計算済みの路面高と横断勾配)
 function carPose(road, s){
   const n = road.pts.length;
   const maxS = (n - 1) * ROAD_STEP;
@@ -4792,7 +4793,26 @@ function carPose(road, s){
   const a = road.pts[i], b = road.pts[i + 1];
   let dx = b.x - a.x, dz = b.z - a.z;
   const l = Math.hypot(dx, dz) || 1;
-  return { x: a.x + dx * f, z: a.z + dz * f, dx: dx / l, dz: dz / l };
+  return { x: a.x + dx * f, z: a.z + dz * f, dx: dx / l, dz: dz / l,
+           h: a.h + (b.h - a.h) * f, hs: a.hs + (b.hs - a.hs) * f };
+}
+
+// 道路点ごとの路面高と横断勾配を事前計算(updateCarsの毎フレームterrainH呼び出しを排除)
+function bakeRoadHeights(){
+  for(const rp of roadPaths){
+    const n = rp.pts.length, w2 = rp.w / 2;
+    for(let i = 0; i < n; i++){
+      const p = rp.pts[i];
+      let dx, dz;
+      if(i + 1 < n){ dx = rp.pts[i + 1].x - p.x; dz = rp.pts[i + 1].z - p.z; }
+      else if(rp.loop){ dx = rp.pts[0].x - p.x; dz = rp.pts[0].z - p.z; }
+      else { dx = p.x - rp.pts[i - 1].x; dz = p.z - rp.pts[i - 1].z; }   // 終端は手前の区間の向きを使う
+      const l = Math.hypot(dx, dz) || 1;
+      p.h = terrainH(p.x, p.z);
+      // 進行方向の横(レーンオフセットと同じ向き)に道路半幅ぶん離れた点との高低差
+      p.hs = (terrainH(p.x + dz / l * w2, p.z - dx / l * w2) - p.h) / w2;
+    }
+  }
 }
 
 // 道路上かどうかの粗い判定マスク(並木を交差点上に植えないため)
@@ -5299,8 +5319,9 @@ function generateCity(seedStr){
   }
 
   // --- 車(道路パスに沿って走る) ---
+  bakeRoadHeights();
   const carColors = [0xd0d3d8, 0x30343c, 0xa33a2e, 0x3a5d8f, 0xc2b26a, 0x777d88];
-  const N_CARS = 460;
+  const N_CARS = 5000;
   for(let i = 0; i < N_CARS; i++){
     const ri = Math.floor(rng() * roadPaths.length);
     const rp = roadPaths[ri];
@@ -5412,6 +5433,8 @@ function generateCity(seedStr){
   }
 
   stats.bTotal = buildings.length;
+  stats.cTotal = cars.length;
+  stats.tTotal = trees.length;
   $('planName').textContent =
     '都市プラン: ' + ({ grid: '碁盤目', organic: '有機的街路', radial: '放射環状' })[cityPlan];
   updateHUD();
@@ -5810,7 +5833,7 @@ function updateBurning(){
 const missiles = [];
 const fx = [];   // {mesh, life, age, update}
 const collapsing = [];
-const stats = { bDead: 0, bTotal: 0, cDead: 0, tDead: 0, mCount: 0, damage: 0, shown: 0 };
+const stats = { bDead: 0, bTotal: 0, cDead: 0, cTotal: 0, tDead: 0, tTotal: 0, mCount: 0, damage: 0, shown: 0 };
 
 const missileGeo = new THREE.ConeGeometry(2.2, 16, 8);
 missileGeo.rotateX(Math.PI / 2); // +Z向き
@@ -6399,17 +6422,22 @@ function updateFx(dt){
 
 // ---------- 車の走行(道路パスに沿う) ----------
 function updateCars(dt){
+  // Y軸回転+平行移動のみなので行列要素を直接書く(Euler→行列変換とsetMatrixAtのコピーを回避)。
+  // 残りの要素は生成時の単位行列のまま変わらない
+  const arr = carMesh.instanceMatrix.array;
   for(const c of cars){
     if(!c.alive) continue;
     c.s += c.speed * c.dir * dt;
     const p = carPose(roadPaths[c.road], c.s);
     const px = p.x + p.dz * c.lane, pz = p.z - p.dx * c.lane;   // 進行方向の横にレーンオフセット
     c.px = px; c.pz = pz;   // destroyAroundの被弾判定用にキャッシュ(carPoseの再計算を避ける)
-    dummy.position.set(px, terrainH(px, pz) + 1.1, pz);
-    dummy.rotation.set(0, Math.atan2(-p.dz * c.dir, p.dx * c.dir), 0);
-    dummy.scale.set(1, 1, 1);
-    dummy.updateMatrix();
-    carMesh.setMatrixAt(c.i, dummy.matrix);
+    const fx = p.dx * c.dir, fz = p.dz * c.dir;   // 正規化済みの進行方向
+    const o = c.i * 16;
+    arr[o] = fx;      arr[o + 2] = fz;
+    arr[o + 8] = -fz; arr[o + 10] = fx;
+    arr[o + 12] = px;
+    arr[o + 13] = p.h + p.hs * c.lane + 1.1;   // 事前計算した路面高+横断勾配
+    arr[o + 14] = pz;
   }
   carMesh.instanceMatrix.needsUpdate = true;
 }
@@ -6525,7 +6553,9 @@ function updateHUD(){
   setHud('bDead', stats.bDead.toLocaleString());
   setHud('bTotal', stats.bTotal.toLocaleString());
   setHud('cDead', stats.cDead.toLocaleString());
+  setHud('cTotal', stats.cTotal.toLocaleString());
   setHud('tDead', stats.tDead.toLocaleString());
+  setHud('tTotal', stats.tTotal.toLocaleString());
   setHud('mCount', stats.mCount.toLocaleString());
   setHud('dmgTotal', yen(stats.shown));
 }
@@ -6563,6 +6593,8 @@ resize();
 generateCity($('seed').value);
 
 let last = performance.now();
+// FPS表示: 0.5秒ごとに更新
+let perfFrames = 0, perfLastT = performance.now();
 function loop(now){
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
@@ -6594,6 +6626,11 @@ function loop(now){
   }
   updateHUD();
   renderer.render(scene, camera);
+  perfFrames++;
+  if(now - perfLastT >= 500){
+    $('perf').textContent = `${Math.round(perfFrames * 1000 / (now - perfLastT))} fps`;
+    perfFrames = 0; perfLastT = now;
+  }
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

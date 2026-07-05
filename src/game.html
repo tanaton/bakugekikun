@@ -27,6 +27,7 @@ const TG_N = 33, TG_SPAN = 6400;
 let tGrid = null, tAmp = 0;
 let cityCore = { x: 0, z: 0 };   // 都心(ビル群)の位置。シードでずれる
 let cityHouseTh = 0.6;           // 住宅街になる都心距離のしきい値。小さいほど住宅街が多い
+let cornerFeats = [];            // 四隅の地形 {type:'m'(山)|'r'(川), x, z, r, amp|w}
 function buildTerrain(rng){
   tGrid = new Float32Array(TG_N * TG_N);
   for(let i = 0; i < tGrid.length; i++) tGrid[i] = rng();
@@ -51,7 +52,36 @@ function terrainH(x, z){
   const h = (c1 - 0.5) * 1.6 + (c2 - 0.5) * 0.5;
   const distC = Math.hypot(x - cityCore.x, z - cityCore.z) / CITY_HALF;
   const flat = 0.25 + 0.75 * Math.min(1, Math.max(0, (distC - 0.15) / 0.75)); // 都心部は平坦
-  return h * tAmp * flat;
+  let hh = h * tAmp * flat;
+  // 四隅の山と川
+  for(const f of cornerFeats){
+    const d = Math.hypot(x - f.x, z - f.z);
+    if(f.type === 'm'){
+      const t = d / f.r;
+      if(t < 1){ const k = 1 - t * t; hh += f.amp * k * k; }
+    } else {
+      const dr = Math.abs(d - f.r) / (f.w * 0.9);
+      if(dr < 1) hh -= (10 + f.w * 0.06) * (1 - dr * dr);   // 川筋は掘り下げる
+    }
+  }
+  return hh;
+}
+// 四隅フィーチャで建物が建てられない場所か(山腹・川べり)
+function cornerBlocked(x, z){
+  for(const f of cornerFeats){
+    const d = Math.hypot(x - f.x, z - f.z);
+    if(f.type === 'm'){ if(d < f.r * 0.8) return true; }
+    else if(Math.abs(d - f.r) < f.w / 2 + 16) return true;
+  }
+  return false;
+}
+// 川の水面の中か(木も生えない)
+function inWater(x, z){
+  for(const f of cornerFeats){
+    if(f.type !== 'r') continue;
+    if(Math.abs(Math.hypot(x - f.x, z - f.z) - f.r) < f.w / 2) return true;
+  }
+  return false;
 }
 // 建物の接地高さ: 敷地の最も低い点に合わせて基礎を埋める
 function groundLevel(x, z, sx, sz){
@@ -88,14 +118,16 @@ const TIMES = {
     hemiSky: 0xbdd5ee, hemiGnd: 0x8a8578, hemiInt: 1.05,
     sunCol: 0xfff1d6, sunInt: 1.35, sunPos: [-900, 2000, 700], emissive: 0.06,
     ground: { base: '#6e6f68', asphalt: '#54575d', sidewalk: '#83858a', block1: '#72747a', block2: '#7a7c7f',
-      park: '#385c3a', house: '#7f7c6d', lane: 'rgba(245,225,150,0.85)' }
+      park: '#385c3a', house: '#7f7c6d', lane: 'rgba(245,225,150,0.85)',
+      water: '#3d6d95', bank: '#83816b', mtn1: '#46603c', mtn2: 'rgba(80,96,72,0)' }
   },
   dusk: {
     fog: 0x1c2438, fogNear: 1400, fogFar: 7500,
     hemiSky: 0x3a5480, hemiGnd: 0x241a12, hemiInt: 0.95,
     sunCol: 0xff9a5a, sunInt: 0.75, sunPos: [-1600, 700, 900], emissive: 0.85,
     ground: { base: '#1f211d', asphalt: '#191b20', sidewalk: '#33363c', block1: '#26282e', block2: '#2b2c31',
-      park: '#22392a', house: '#2a2822', lane: 'rgba(190,175,120,0.5)' }
+      park: '#22392a', house: '#2a2822', lane: 'rgba(190,175,120,0.5)',
+      water: '#14222f', bank: '#26261e', mtn1: '#1a2a1a', mtn2: 'rgba(26,36,24,0)' }
   }
 };
 function applyTime(mode){
@@ -344,6 +376,7 @@ function makeTreeGeometries(){
 
 // 木を1本登録(w=樹冠の幅係数で個体差を出す)
 function pushTree(x, z, s, type, rng){
+  if(inWater(x, z)) return;                              // 川の中には生えない
   trees.push({ x, z, s, w: 0.8 + rng() * 0.45, type, alive: true });
 }
 
@@ -487,6 +520,7 @@ function yardTrees(lot, n, rng, anywhere){
 function addBuildingLot(lot, rng){
   const { x, z, rot, availW, availD, distC } = lot;
   if(Math.abs(x) > 2600 || Math.abs(z) > 2600) return;
+  if(cornerBlocked(x, z)) return;                        // 山腹・川べりには建てない
   if(lot.house){
     if(rng() < 0.14){                                    // 空き地 → 児童公園(緑地 + 密な木)
       lotDecals.push({ x, z, rot, w: Math.max(7, availW - 3), d: Math.max(7, availD - 3), kind: 'park' });
@@ -815,6 +849,19 @@ function generateCity(seedStr){
   const coreA = rng() * Math.PI * 2, coreR = rng() * 900;
   cityCore = { x: Math.cos(coreA) * coreR, z: Math.sin(coreA) * coreR };
   cityHouseTh = 0.5 + rng() * 0.2;   // 0.5(住宅多め) 〜 0.7(ビル多め)
+  // 四隅は平地 / 山 / 川のいずれかに
+  cornerFeats = [];
+  for(const sx of [-1, 1]) for(const sz of [-1, 1]){
+    const roll = rng(), fr = rng(), fp = rng();
+    if(roll < 0.34){
+      cornerFeats.push({ type: 'm', x: sx * 2500, z: sz * 2500,
+        r: 1100 + fr * 700, amp: 170 + fp * 260 });
+    } else if(roll < 0.67){
+      cornerFeats.push({ type: 'r', x: sx * 2500, z: sz * 2500,
+        r: 650 + fr * 550, w: 70 + fp * 80 });
+    }
+    // それ以外は平地のまま
+  }
   buildTerrain(rng);               // 起伏もシードで決まる
 
   // --- 都市プランをシードで選ぶ ---
@@ -943,6 +990,17 @@ function generateCity(seedStr){
       }
     }
   }
+  // 山は森に覆われる
+  for(const f of cornerFeats){
+    if(f.type !== 'm') continue;
+    const n = Math.round(f.r * f.r / 3200);
+    for(let k = 0; k < n; k++){
+      const a = rng() * Math.PI * 2, rr = Math.sqrt(rng()) * f.r * 0.92;
+      const tx = f.x + Math.cos(a) * rr, tz = f.z + Math.sin(a) * rr;
+      if(Math.abs(tx) > 2560 || Math.abs(tz) > 2560 || onRoad(tx, tz)) continue;
+      pushTree(tx, tz, 5 + rng() * 6, Math.floor(rng() * 3), rng);
+    }
+  }
   const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4f3a });
   const leafCols = [0x4c7a36, 0x2f5a33, 0x53823a];   // 濃い緑(広葉樹 / 針葉樹 / ポプラ型)
   const treeGeos = makeTreeGeometries();
@@ -1010,6 +1068,23 @@ function drawGround(){
     g.stroke();
   };
   for(const al of alleyPaths) strokeRoad(al, al.w, G.asphalt);   // 街区内の路地
+  // 四隅の地形フィーチャ(山の緑 / 川)。道路より先に描くと道路が橋・山道になる
+  for(const f of cornerFeats){
+    const px = w2c(f.x), pz = w2c(f.z);
+    if(f.type === 'm'){
+      const grd = g.createRadialGradient(px, pz, f.r * 0.1 * s, px, pz, f.r * s);
+      grd.addColorStop(0, G.mtn1);
+      grd.addColorStop(1, G.mtn2);
+      g.fillStyle = grd;
+      g.beginPath(); g.arc(px, pz, f.r * s, 0, Math.PI * 2); g.fill();
+    } else {
+      g.lineCap = 'butt';
+      g.strokeStyle = G.bank; g.lineWidth = (f.w + 16) * s;
+      g.beginPath(); g.arc(px, pz, f.r * s, 0, Math.PI * 2); g.stroke();
+      g.strokeStyle = G.water; g.lineWidth = f.w * s;
+      g.beginPath(); g.arc(px, pz, f.r * s, 0, Math.PI * 2); g.stroke();
+    }
+  }
   for(const rp of roadPaths) strokeRoad(rp, rp.w + 11, G.sidewalk);
   for(const rp of roadPaths) strokeRoad(rp, rp.w, G.asphalt);
   g.setLineDash([6, 8]);

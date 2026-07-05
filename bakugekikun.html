@@ -4638,7 +4638,8 @@ let carMesh = null, ground = null;
 let gCanvas = null, gCtx = null, gTex = null;
 let waterMat = null, waterTex = null;   // 川の水面オーバーレイ(テクスチャオフセットで流す)
 let emissiveMats = [];   // 時間帯で窓明かりの強さを切り替えるマテリアル
-let grid = new Map();    // 空間ハッシュ
+let grid = new Map();     // 建物の空間ハッシュ
+let treeGrid = new Map(); // 木の空間ハッシュ(木は静的なので街生成時に1回だけ構築)
 const GRID_CELL = 130;
 let cityGroup = new THREE.Group();
 scene.add(cityGroup);
@@ -5170,7 +5171,7 @@ function generateCity(seedStr){
   scene.remove(cityGroup);
   cityGroup = new THREE.Group();
   scene.add(cityGroup);
-  buildings = []; cars = []; trees = []; grid = new Map();
+  buildings = []; cars = []; trees = []; grid = new Map(); treeGrid = new Map();
   roadPaths = []; groundPolys = []; alleyPaths = []; lotDecals = [];
   pendingLots = []; parkTreeJobs = [];
   for(const m of missiles){ scene.remove(m.mesh); scene.remove(m.marker); m.marker.material.dispose(); }
@@ -5401,6 +5402,9 @@ function generateCity(seedStr){
     dummy.updateMatrix();
     treeMeshes[t.type].setMatrixAt(t.mi, dummy.matrix);
     treeMeshes[t.type].setColorAt(t.mi, new THREE.Color(1, 1, 1).offsetHSL((rng() - 0.5) * 0.06, 0, (rng() - 0.5) * 0.1 - 0.02));
+    const k = gridKey(t.x, t.z);
+    if(!treeGrid.has(k)) treeGrid.set(k, []);
+    treeGrid.get(k).push(t);
   }
   for(let ti = 0; ti < 3; ti++){
     if(tCounts[ti]) treeMeshes[ti].instanceColor.needsUpdate = true;
@@ -6251,31 +6255,33 @@ function destroyAround(p, R, depth = 0, wave = 0){
       }
     }
   }
-  // 車
+  // 車(位置はupdateCarsがキャッシュ済み。ループ順は updateCars → updateMissiles なので必ず設定されている)
   const CR = R * 1.25;
   for(const c of cars){
     if(!c.alive) continue;
-    const pose = carPose(roadPaths[c.road], c.s);
-    const px = pose.x + pose.dz * c.lane;
-    const pz = pose.z - pose.dx * c.lane;
-    if(Math.hypot(px - p.x, pz - p.z) <= CR){
+    if(Math.hypot(c.px - p.x, c.pz - p.z) <= CR){
       c.alive = false;
       carMesh.setMatrixAt(c.i, HIDDEN_MAT);
       stats.cDead++;
       stats.damage += CAR_VALUE;
     }
   }
-  // 木
+  // 木(空間ハッシュで近傍セルのみ走査)
   const TR = R * 1.2;
   const treeHit = [false, false, false];
-  for(const t of trees){
-    if(!t.alive) continue;
-    if(Math.abs(t.x - p.x) > TR || Math.abs(t.z - p.z) > TR) continue;   // 矩形で早期棄却(木は数万本になる)
-    if(Math.hypot(t.x - p.x, t.z - p.z) <= TR){
-      t.alive = false;
-      treeMeshes[t.type].setMatrixAt(t.mi, HIDDEN_MAT);
-      treeHit[t.type] = true;
-      stats.tDead++;
+  const t0x = cellOf(p.x - TR), t1x = cellOf(p.x + TR);
+  const t0z = cellOf(p.z - TR), t1z = cellOf(p.z + TR);
+  for(let cx = t0x; cx <= t1x; cx++) for(let cz = t0z; cz <= t1z; cz++){
+    const cell = treeGrid.get(cellKey(cx, cz));
+    if(!cell) continue;
+    for(const t of cell){
+      if(!t.alive) continue;
+      if(Math.hypot(t.x - p.x, t.z - p.z) <= TR){
+        t.alive = false;
+        treeMeshes[t.type].setMatrixAt(t.mi, HIDDEN_MAT);
+        treeHit[t.type] = true;
+        stats.tDead++;
+      }
     }
   }
   treeHit.forEach((h, ti) => { if(h) treeMeshes[ti].instanceMatrix.needsUpdate = true; });
@@ -6398,6 +6404,7 @@ function updateCars(dt){
     c.s += c.speed * c.dir * dt;
     const p = carPose(roadPaths[c.road], c.s);
     const px = p.x + p.dz * c.lane, pz = p.z - p.dx * c.lane;   // 進行方向の横にレーンオフセット
+    c.px = px; c.pz = pz;   // destroyAroundの被弾判定用にキャッシュ(carPoseの再計算を避ける)
     dummy.position.set(px, terrainH(px, pz) + 1.1, pz);
     dummy.rotation.set(0, Math.atan2(-p.dz * c.dir, p.dx * c.dir), 0);
     dummy.scale.set(1, 1, 1);

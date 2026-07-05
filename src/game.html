@@ -1055,6 +1055,9 @@ function generateCity(seedStr){
     let placed = 0;
     for(let k = 0; k < target * 4 && placed < target; k++){
       const a = rng() * Math.PI * 2, rr = Math.sqrt(rng()) * f.r * 0.95;
+      // 山裾(民家が建ち始める帯)では密度を外側に向かって減衰させる
+      const t = rr / f.r;
+      if(t > 0.72 && rng() > Math.pow(Math.max(0, 1 - (t - 0.72) / 0.26), 2)) continue;
       const tx = f.x + Math.cos(a) * rr, tz = f.z + Math.sin(a) * rr;
       if(Math.abs(tx) > 2560 || Math.abs(tz) > 2560 || onRoad(tx, tz)) continue;
       pushTree(tx, tz, 6 + rng() * 7, Math.floor(rng() * 3), rng);

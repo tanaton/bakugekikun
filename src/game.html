@@ -66,7 +66,7 @@ function terrainH(x, z){
   }
   return hh;
 }
-// 四隅フィーチャで建物が建てられない場所か(山腹・川べり)
+// 地形フィーチャで建物が建てられない場所か(山腹・川べり)
 function cornerBlocked(x, z){
   for(const f of cornerFeats){
     const d = Math.hypot(x - f.x, z - f.z);
@@ -74,6 +74,51 @@ function cornerBlocked(x, z){
     else if(Math.abs(d - f.r) < f.w / 2 + 16) return true;
   }
   return false;
+}
+// 山の中か(道路も通さない)
+function inMountain(x, z){
+  for(const f of cornerFeats){
+    if(f.type === 'm' && Math.hypot(x - f.x, z - f.z) < f.r * 0.82) return true;
+  }
+  return false;
+}
+// 山にかかった道路を刈り取り、外側の区間だけ残す
+function cullMountainRoads(){
+  const out = [];
+  for(const rp of roadPaths){
+    let cut = false, run = [];
+    const runs = [];
+    for(const p of rp.pts){
+      if(inMountain(p.x, p.z)){
+        cut = true;
+        if(run.length) runs.push(run);
+        run = [];
+      } else run.push(p);
+    }
+    if(run.length) runs.push(run);
+    if(!cut){ out.push(rp); continue; }
+    // 環状道路は始点・終点の区間が地続きなので繋ぎ直す
+    if(rp.loop && runs.length >= 2 &&
+       !inMountain(rp.pts[0].x, rp.pts[0].z) &&
+       !inMountain(rp.pts[rp.pts.length - 1].x, rp.pts[rp.pts.length - 1].z)){
+      runs[0] = runs.pop().concat(runs[0]);
+    }
+    for(const r2 of runs) if(r2.length >= 3) out.push({ pts: r2, w: rp.w, major: rp.major, loop: false });
+  }
+  roadPaths = out;
+}
+// 山にかかった路地は丸ごと消す
+function cullMountainAlleys(){
+  alleyPaths = alleyPaths.filter(al => {
+    for(let i = 0; i < al.pts.length - 1; i++){
+      const a = al.pts[i], b = al.pts[i + 1];
+      const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 40));
+      for(let k = 0; k <= n; k++){
+        if(inMountain(a.x + (b.x - a.x) * k / n, a.z + (b.z - a.z) * k / n)) return false;
+      }
+    }
+    return true;
+  });
 }
 // 川の水面の中か(木も生えない)
 function inWater(x, z){
@@ -849,16 +894,22 @@ function generateCity(seedStr){
   const coreA = rng() * Math.PI * 2, coreR = rng() * 900;
   cityCore = { x: Math.cos(coreA) * coreR, z: Math.sin(coreA) * coreR };
   cityHouseTh = 0.5 + rng() * 0.2;   // 0.5(住宅多め) 〜 0.7(ビル多め)
-  // 四隅は平地 / 山 / 川のいずれかに
+  // 四隅と四辺の中央は、平地 / 山 / 川のいずれかに
   cornerFeats = [];
-  for(const sx of [-1, 1]) for(const sz of [-1, 1]){
+  const featSpots = [
+    [-1, -1], [1, -1], [-1, 1], [1, 1],   // 四隅
+    [0, -1], [0, 1], [-1, 0], [1, 0],     // 各辺の中央
+  ];
+  for(const [sx, sz] of featSpots){
+    const corner = sx !== 0 && sz !== 0;
     const roll = rng(), fr = rng(), fp = rng();
-    if(roll < 0.34){
+    const th1 = corner ? 0.34 : 0.22, th2 = corner ? 0.67 : 0.44;  // 辺は控えめの確率
+    if(roll < th1){
       cornerFeats.push({ type: 'm', x: sx * 2500, z: sz * 2500,
-        r: 1100 + fr * 700, amp: 170 + fp * 260 });
-    } else if(roll < 0.67){
+        r: (corner ? 1100 : 950) + fr * 650, amp: 170 + fp * 260 });
+    } else if(roll < th2){
       cornerFeats.push({ type: 'r', x: sx * 2500, z: sz * 2500,
-        r: 650 + fr * 550, w: 70 + fp * 80 });
+        r: (corner ? 650 : 550) + fr * 500, w: 70 + fp * 80 });
     }
     // それ以外は平地のまま
   }
@@ -869,6 +920,8 @@ function generateCity(seedStr){
   cityPlan = roll < 0.34 ? 'grid' : roll < 0.67 ? 'organic' : 'radial';
   if(cityPlan === 'radial') genRadialPlan(rng);
   else genGridPlan(rng, cityPlan === 'organic');
+  cullMountainRoads();     // 山にかかった道路・路地は消して森にする
+  cullMountainAlleys();
 
   // --- 地面の質感ノイズ(シードで固定) ---
   noiseCanvas = document.createElement('canvas');
@@ -993,7 +1046,7 @@ function generateCity(seedStr){
   // 山は森に覆われる
   for(const f of cornerFeats){
     if(f.type !== 'm') continue;
-    const n = Math.round(f.r * f.r / 3200);
+    const n = Math.round(f.r * f.r / 2400);
     for(let k = 0; k < n; k++){
       const a = rng() * Math.PI * 2, rr = Math.sqrt(rng()) * f.r * 0.92;
       const tx = f.x + Math.cos(a) * rr, tz = f.z + Math.sin(a) * rr;

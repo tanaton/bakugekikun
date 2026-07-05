@@ -400,7 +400,7 @@ function makeHouseTexture(rng){
 // ---------- 街の生成 ----------
 let buildings = [];      // {x,z,sx,sz,h,rot,value,state,k(種類),i,mi}
 let cars = [];           // {road,s,dir,lane,speed,alive,i,color}
-let trees = [];          // {x,z,s,alive,i}
+let trees = [];          // {x,z,s,w,type,alive,mesh,mi}
 let roadPaths = [];      // {pts:[{x,z,h,hs}] 等間隔ROAD_STEP, w, major, loop} h=路面高, hs=横断勾配
 let groundPolys = [];    // 地面の塗り分けポリゴン {pts, kind:'park'|'house'|'block', v}
 let alleyPaths = [];     // 街区内の細街路 {pts, w}
@@ -409,8 +409,9 @@ let noiseCanvas = null;  // 地面の質感ノイズ(シード決定)
 let cityPlan = 'grid';   // 'grid' | 'organic' | 'radial' (シードで決まる)
 let pendingLots = [], parkTreeJobs = [];   // プラン生成 → 建物/木生成への受け渡し
 let bMeshes = [];        // 種類別メッシュ [0:コンクリビル, 1:ガラスビル, 2以降:民家(屋根色別)]
-let treeMeshes = [];     // 樹種別 [0:広葉樹, 1:針葉樹, 2:ポプラ型]
+let treeMeshes = [];     // 空間チャンク×樹種ごとのInstancedMesh(チャンク単位でカリング)
 let carMesh = null, ground = null;
+let movingCars = 0;      // cars配列の先頭movingCars台が走行車両。以降は駐車車両(行列は不変)
 let gCanvas = null, gCtx = null, gTex = null;
 let waterMat = null, waterTex = null;   // 川の水面オーバーレイ(テクスチャオフセットで流す)
 let emissiveMats = [];   // 時間帯で窓明かりの強さを切り替えるマテリアル
@@ -990,13 +991,14 @@ function generateCity(seedStr){
   roadPaths = []; groundPolys = []; alleyPaths = []; lotDecals = [];
   pendingLots = []; parkTreeJobs = [];
   for(const m of missiles){ scene.remove(m.mesh); scene.remove(m.marker); m.marker.material.dispose(); }
-  for(const f of fx){ scene.remove(f.mesh); f.mesh.material.dispose(); }
+  for(const f of fx) releaseFx(f);   // materialを持たないPointLightにも安全
   missiles.length = 0; fx.length = 0; collapsing.length = 0;
   delayedBooms.length = 0; burnSites.length = 0; burningBldgs.length = 0;
   nukeEmitters.length = 0;
   const nfEl = $('nukeFlash');
   nfEl.style.transition = 'none'; nfEl.style.opacity = '0';
   clearDebris();
+  scorchList.length = 0;   // 実体は旧cityGroupと一緒に破棄済み
   for(const L of boomLights) L.intensity = 0;
   fireP.clear(); smokeP.clear();
   stats.bDead = 0; stats.cDead = 0; stats.tDead = 0; stats.mCount = 0; stats.damage = 0; stats.shown = 0;
@@ -1129,6 +1131,7 @@ function generateCity(seedStr){
       color: new THREE.Color(carColors[Math.floor(rng() * carColors.length)])
     });
   }
+  movingCars = cars.length;
   // 駐車場の停車中の車(動かない)。区画のローカル座標で列に並べる
   for(const dcl of lotDecals){
     if(dcl.kind !== 'parking') continue;
@@ -1225,30 +1228,46 @@ function generateCity(seedStr){
   }
   const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4f3a });
   const leafCols = [0x4c7a36, 0x2f5a33, 0x53823a];   // 濃い緑(広葉樹 / 針葉樹 / ポプラ型)
+  const leafMats = leafCols.map(c => new THREE.MeshLambertMaterial({ color: c }));
   const treeGeos = makeTreeGeometries();
-  const tCounts = [0, 0, 0];
-  for(const t of trees) t.mi = tCounts[t.type]++;
-  treeMeshes = [0, 1, 2].map(ti => {
-    const m = new THREE.InstancedMesh(treeGeos[ti],
-      [trunkMat, new THREE.MeshLambertMaterial({ color: leafCols[ti] })], tCounts[ti]);
-    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    return m;
-  });
+  // 木は空間チャンク×樹種ごとのInstancedMeshに分ける。街全体で1メッシュだと
+  // バウンディングスフィアが常に視錐台に入り数万本すべてが毎フレーム描画されるため、
+  // チャンク単位のフラスタムカリングで画面外の木のGPU負荷を落とす
+  const TREE_CHUNKS = 6;   // 6x6分割 = 900m角
+  const chunkOf = v => Math.min(TREE_CHUNKS - 1, Math.max(0,
+    Math.floor((v + MAP_HALF) * TREE_CHUNKS / (MAP_HALF * 2))));
+  const treeGroups = new Map();   // チャンク×樹種のキー → 本数(採番時はカウンタとして再利用)
   for(const t of trees){
+    t.ck = (chunkOf(t.x) * TREE_CHUNKS + chunkOf(t.z)) * 3 + t.type;
+    treeGroups.set(t.ck, (treeGroups.get(t.ck) || 0) + 1);
+  }
+  const chunkMeshes = new Map();
+  for(const [ck, n] of treeGroups){
+    const m = new THREE.InstancedMesh(treeGeos[ck % 3], [trunkMat, leafMats[ck % 3]], n);
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    chunkMeshes.set(ck, m);
+    treeGroups.set(ck, 0);
+  }
+  const tCol = new THREE.Color();
+  for(const t of trees){
+    t.mesh = chunkMeshes.get(t.ck);
+    t.mi = treeGroups.get(t.ck);
+    treeGroups.set(t.ck, t.mi + 1);
     t.gy = terrainH(t.x, t.z);
     dummy.position.set(t.x, t.gy - 0.2, t.z);
     dummy.rotation.set(0, rng() * Math.PI * 2, 0);
     dummy.scale.set(t.s * t.w, t.s, t.s * t.w);
     dummy.updateMatrix();
-    treeMeshes[t.type].setMatrixAt(t.mi, dummy.matrix);
-    treeMeshes[t.type].setColorAt(t.mi, new THREE.Color(1, 1, 1).offsetHSL((rng() - 0.5) * 0.06, 0, (rng() - 0.5) * 0.1 - 0.02));
+    t.mesh.setMatrixAt(t.mi, dummy.matrix);
+    t.mesh.setColorAt(t.mi, tCol.setRGB(1, 1, 1).offsetHSL((rng() - 0.5) * 0.06, 0, (rng() - 0.5) * 0.1 - 0.02));
     const k = gridKey(t.x, t.z);
     if(!treeGrid.has(k)) treeGrid.set(k, []);
     treeGrid.get(k).push(t);
   }
-  for(let ti = 0; ti < 3; ti++){
-    if(tCounts[ti]) treeMeshes[ti].instanceColor.needsUpdate = true;
-    cityGroup.add(treeMeshes[ti]);
+  treeMeshes = [...chunkMeshes.values()];
+  for(const m of treeMeshes){
+    m.instanceColor.needsUpdate = true;
+    cityGroup.add(m);
   }
 
   stats.bTotal = buildings.length;
@@ -1486,6 +1505,7 @@ const P_FRAG = `
 class ParticlePool {
   constructor(max, blending){
     this.max = max; this.parts = []; this.cursor = 0;
+    this.owner = new Array(max).fill(null);   // slot → 現在の持ち主(プール飽和時の奪い合い検出)
     this.pos = new Float32Array(max * 3);
     this.col = new Float32Array(max * 3);
     this.size = new Float32Array(max);
@@ -1503,18 +1523,26 @@ class ParticlePool {
     scene.add(this.mesh);
     this.clear();
   }
-  clear(){ this.parts.length = 0; this.alpha.fill(0); this.geo.attributes.aAlpha.needsUpdate = true; }
+  clear(){ this.parts.length = 0; this.owner.fill(null); this.alpha.fill(0); this.geo.attributes.aAlpha.needsUpdate = true; }
   spawn(p){ // {x,y,z,vx,vy,vz,life,size,r,g,b,grav,drag,fadeIn}
     p.age = 0; p.slot = this.cursor;
+    this.owner[p.slot] = p;   // スロットを奪われた古い個体はupdate側で除去する
     this.cursor = (this.cursor + 1) % this.max;
     this.parts.push(p);
   }
   update(dt){
     if(!this.parts.length) return;   // 空のときはGPU転送も省く
+    // 順序はslotが持つので配列順は不問 → 除去はswap-remove(spliceのシフトを避ける)
     for(let i = this.parts.length - 1; i >= 0; i--){
       const p = this.parts[i];
+      if(this.owner[p.slot] !== p){   // スロットを奪われた個体: alphaは新しい持ち主の管理なので触らない
+        this.parts[i] = this.parts[this.parts.length - 1]; this.parts.pop(); continue;
+      }
       p.age += dt;
-      if(p.age >= p.life){ this.alpha[p.slot] = 0; this.parts.splice(i, 1); continue; }
+      if(p.age >= p.life){
+        this.alpha[p.slot] = 0; this.owner[p.slot] = null;
+        this.parts[i] = this.parts[this.parts.length - 1]; this.parts.pop(); continue;
+      }
       p.vy -= (p.grav || 0) * dt;
       const dr = p.drag ? Math.exp(-p.drag * dt) : 1;
       p.vx *= dr; p.vy *= dr; p.vz *= dr;
@@ -1574,11 +1602,13 @@ debrisMesh.frustumCulled = false;
 scene.add(debrisMesh);
 const debrisList = [];
 let debrisCursor = 0;
-const debrisCols = [0x4a4a4e, 0x6a655c, 0x8a857a, 0x3a3d44, 0x7a5a48];
+const debrisOwner = new Array(DEBRIS_N).fill(null);   // slot → 現在の持ち主
+const debrisCols = [0x4a4a4e, 0x6a655c, 0x8a857a, 0x3a3d44, 0x7a5a48].map(c => new THREE.Color(c));
 // 破壊済みインスタンスを画面外へ隠す共用行列(瓦礫・車・木)
 const HIDDEN_MAT = new THREE.Matrix4().makeScale(0.001, 0.001, 0.001).setPosition(0, -100, 0);
 function clearDebris(){
   debrisList.length = 0;
+  debrisOwner.fill(null);
   for(let i = 0; i < DEBRIS_N; i++) debrisMesh.setMatrixAt(i, HIDDEN_MAT);
   debrisMesh.instanceMatrix.needsUpdate = true;
 }
@@ -1592,21 +1622,24 @@ function spawnDebris(x, y, z, pow){
     rvx: (Math.random() - 0.5) * 12, rvz: (Math.random() - 0.5) * 12,
     size: 0.9 + Math.random() * 3.2, life: 2.2 + Math.random() * 2.4, age: 0
   };
-  debrisMesh.setColorAt(d.slot, new THREE.Color(debrisCols[Math.floor(Math.random() * debrisCols.length)]));
+  debrisMesh.setColorAt(d.slot, debrisCols[Math.floor(Math.random() * debrisCols.length)]);
   debrisMesh.instanceColor.needsUpdate = true;   // 色が変わるのはspawn時だけ
   debrisCursor = (debrisCursor + 1) % DEBRIS_N;
-  const old = debrisList.findIndex(o => o.slot === d.slot);  // スロットを奪われた古い瓦礫は消す
-  if(old >= 0) debrisList.splice(old, 1);
+  debrisOwner[d.slot] = d;   // スロットを奪われた古い瓦礫はupdate側で除去する
   debrisList.push(d);
 }
 function updateDebris(dt){
   if(!debrisList.length) return;
   for(let i = debrisList.length - 1; i >= 0; i--){
     const d = debrisList[i];
+    if(debrisOwner[d.slot] !== d){   // スロットを奪われた古い瓦礫(行列は新しい持ち主が上書き済み)
+      debrisList[i] = debrisList[debrisList.length - 1]; debrisList.pop(); continue;
+    }
     d.age += dt;
     if(d.age >= d.life){
       debrisMesh.setMatrixAt(d.slot, HIDDEN_MAT);
-      debrisList.splice(i, 1);
+      debrisOwner[d.slot] = null;
+      debrisList[i] = debrisList[debrisList.length - 1]; debrisList.pop();
       continue;
     }
     d.vy -= 260 * dt;
@@ -1662,6 +1695,34 @@ const flashGeo = new THREE.SphereGeometry(1, 16, 12);
 // 発光エフェクト用マテリアル(加算合成・両面などは opts で上書き)
 const glowMat = (color, opacity, opts) => new THREE.MeshBasicMaterial(
   Object.assign({ color, transparent: true, opacity, depthWrite: false }, opts));
+// 爆発エフェクトのメッシュ+マテリアルのプール。毎爆発のnew/disposeによるGC負荷を避ける。
+// blending/sideは描画状態が変わるためプリセット別にプールを分け、マテリアルは再設定だけで使い回す
+const fxFree = new Map();   // プリセット名 → 待機中メッシュの配列
+function acquireFx(key, geo, blending, side, color, opacity){
+  let list = fxFree.get(key);
+  if(!list) fxFree.set(key, list = []);
+  let mesh = list.pop();
+  if(!mesh){
+    mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial(
+      { transparent: true, depthWrite: false, blending, side }));
+    mesh.userData.fxKey = key;
+  }
+  mesh.material.color.set(color);
+  mesh.material.opacity = opacity;
+  mesh.rotation.set(0, 0, 0);
+  mesh.scale.set(1, 1, 1);
+  return mesh;
+}
+const fxSphereAdd  = (c, o) => acquireFx('sA',  flashGeo, THREE.AdditiveBlending, THREE.FrontSide,  c, o);
+const fxSphereAddD = (c, o) => acquireFx('sAD', flashGeo, THREE.AdditiveBlending, THREE.DoubleSide, c, o);
+const fxRingAddD   = (c, o) => acquireFx('rAD', ringGeo,  THREE.AdditiveBlending, THREE.DoubleSide, c, o);
+const fxRingD      = (c, o) => acquireFx('rD',  ringGeo,  THREE.NormalBlending,   THREE.DoubleSide, c, o);
+function releaseFx(f){
+  scene.remove(f.mesh);
+  const key = f.mesh.userData && f.mesh.userData.fxKey;
+  if(key) fxFree.get(key).push(f.mesh);
+  else if(f.mesh.material) f.mesh.material.dispose();   // プール外(PointLightはmaterialなし)
+}
 // 焦げ跡: 放射状グラデーションのデカール用マテリアル(全爆発で共用・生成は起動時1回)
 function makeScorchMaterial(innerR, stops){
   const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -1676,6 +1737,9 @@ const scorchMat = makeScorchMaterial(4, [
   [0, 'rgba(8,8,8,0.9)'], [0.45, 'rgba(12,11,9,0.78)'], [0.75, 'rgba(16,13,11,0.4)'], [1, 'rgba(20,16,12,0)']]);
 const nukeScorchMat = makeScorchMaterial(6, [
   [0, 'rgba(8,8,8,0.92)'], [0.55, 'rgba(14,12,10,0.75)'], [1, 'rgba(20,16,12,0)']]);
+// 表示中の焦げ跡(古い順)。無制限に増やすとドローコールと透明オーバードローが蓄積するため上限を設ける
+const scorchList = [];
+const SCORCH_MAX = 60;
 // 焦げ跡デカール: 内部にも頂点を持つ格子を地形に沿わせて密着させる
 function addScorch(p, gy, size, segs, lift, mat){
   const sg = new THREE.PlaneGeometry(size, size, segs, segs);
@@ -1689,6 +1753,12 @@ function addScorch(p, gy, size, segs, lift, mat){
   const mesh = new THREE.Mesh(sg, mat);
   mesh.position.set(p.x, gy, p.z);
   cityGroup.add(mesh);
+  scorchList.push(mesh);
+  if(scorchList.length > SCORCH_MAX){   // 最も古い跡から消す(マテリアルは共用なのでジオメトリだけ破棄)
+    const old = scorchList.shift();
+    cityGroup.remove(old);
+    old.geometry.dispose();
+  }
 }
 
 const raycaster = new THREE.Raycaster();
@@ -1808,23 +1878,22 @@ function detonate(p, R = 105){
   const gy = p.y || 0;
   flashLight(p.x, p.z, 7 * f, gy);
   // --- 閃光 ---
-  const flash = new THREE.Mesh(flashGeo, glowMat(0xfff7e0, 1, { blending: THREE.AdditiveBlending }));
+  const flash = fxSphereAdd(0xfff7e0, 1);
   flash.position.set(p.x, gy + 10, p.z);
   addFx(flash, 0.25, (o, k) => { const s = (12 + k * 300) * f; o.scale.set(s, s, s); o.material.opacity = 1 - k; });
   // --- 火球(白熱コア + 外炎の二層) ---
-  const core = new THREE.Mesh(flashGeo, glowMat(0xffd07a, 1, { blending: THREE.AdditiveBlending }));
+  const core = fxSphereAdd(0xffd07a, 1);
   core.position.set(p.x, gy + 8, p.z);
   addFx(core, 0.6, (o, k) => { const s = (6 + Math.pow(k, 0.4) * 70) * f; o.scale.set(s, s * 1.3, s); o.material.opacity = 1 - k; });
-  const ball = new THREE.Mesh(flashGeo, glowMat(0xff5a1c, 0.9, { blending: THREE.AdditiveBlending }));
+  const ball = fxSphereAdd(0xff5a1c, 0.9);
   ball.position.set(p.x, gy + 6, p.z);
   addFx(ball, 1.0, (o, k) => { const s = (8 + Math.pow(k, 0.45) * 130) * f; o.scale.set(s, s * 1.2, s);
     o.position.y = gy + 6 + k * 45 * f; o.material.opacity = 0.9 * (1 - k); });
   // --- 衝撃波リング(発光 + 土埃の二重) ---
-  const wave = new THREE.Mesh(ringGeo,
-    glowMat(0xffd9a8, 0.95, { side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+  const wave = fxRingAddD(0xffd9a8, 0.95);
   wave.rotation.x = -Math.PI / 2; wave.position.set(p.x, gy + 2.5, p.z);
   addFx(wave, 0.7, (o, k) => { const s = (8 + Math.pow(k, 0.55) * 420) * f; o.scale.set(s, s, 1); o.material.opacity = 0.95 * (1 - k); });
-  const wave2 = new THREE.Mesh(ringGeo, glowMat(0x8a7458, 0.5, { side: THREE.DoubleSide }));
+  const wave2 = fxRingD(0x8a7458, 0.5);
   wave2.rotation.x = -Math.PI / 2; wave2.position.set(p.x, gy + 1.8, p.z);
   addFx(wave2, 1.5, (o, k) => { const s = (12 + Math.pow(k, 0.6) * 520) * f; o.scale.set(s, s, 1); o.material.opacity = 0.5 * (1 - k); });
   // --- 焦げ跡(水中への着弾は跡を残さない) ---
@@ -1903,7 +1972,7 @@ function detonate(p, R = 105){
 function miniBoom(d){
   const gy = terrainH(d.x, d.z);
   flashLight(d.x, d.z, 3.5, gy);
-  const ball = new THREE.Mesh(flashGeo, glowMat(0xff7a30, 0.95, { blending: THREE.AdditiveBlending }));
+  const ball = fxSphereAdd(0xff7a30, 0.95);
   ball.position.set(d.x, gy + 6, d.z);
   addFx(ball, 0.5, (o, k) => { const s = 4 + Math.pow(k, 0.5) * 42; o.scale.set(s, s * 1.2, s); o.material.opacity = 0.95 * (1 - k); });
   for(let i = 0; i < 45; i++){
@@ -1978,12 +2047,12 @@ function detonateNuke(p){
   addFx(NL, 4, (o, k) => { o.intensity = 18 * LIGHT_SCALE * (1 - k) * (1 - k); });
   flashLight(p.x, p.z, 10, gy);
   // --- 白熱コア ---
-  const core = new THREE.Mesh(flashGeo, glowMat(0xfffbee, 1, { blending: THREE.AdditiveBlending }));
+  const core = fxSphereAdd(0xfffbee, 1);
   core.position.set(p.x, gy + 40, p.z);
   addFx(core, 1.2, (o, k) => { const s = 20 + Math.pow(k, 0.4) * 190; o.scale.set(s, s, s); o.material.opacity = 1 - k; });
   // --- 上昇する大火球(白 → 橙 → 赤黒) ---
   const fbC1 = new THREE.Color(0xffe6a0), fbC2 = new THREE.Color(0xff3c08);
-  const fb = new THREE.Mesh(flashGeo, glowMat(0xffe6a0, 0.95, { blending: THREE.AdditiveBlending }));
+  const fb = fxSphereAdd(0xffe6a0, 0.95);
   fb.position.set(p.x, gy + 40, p.z);
   addFx(fb, 4.5, (o, k) => {
     const s = 40 + Math.pow(k, 0.5) * 260;
@@ -1993,20 +2062,18 @@ function detonateNuke(p){
     o.material.opacity = 0.95 * (1 - k * k);
   });
   // --- 衝撃波ドーム ---
-  const dome = new THREE.Mesh(flashGeo,
-    glowMat(0xfff2d8, 0.5, { blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+  const dome = fxSphereAddD(0xfff2d8, 0.5);
   dome.position.set(p.x, gy, p.z);
   addFx(dome, 1.4, (o, k) => { const s = 30 + Math.pow(k, 0.6) * 720; o.scale.set(s, s * 0.7, s); o.material.opacity = 0.5 * (1 - k); });
   // --- 地表の二重リング ---
-  const w1 = new THREE.Mesh(ringGeo,
-    glowMat(0xffd9a8, 1, { side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+  const w1 = fxRingAddD(0xffd9a8, 1);
   w1.rotation.x = -Math.PI / 2; w1.position.set(p.x, gy + 3, p.z);
   addFx(w1, 2, (o, k) => { const s = 20 + Math.pow(k, 0.55) * 1500; o.scale.set(s, s, 1); o.material.opacity = 1 - k; });
-  const w2 = new THREE.Mesh(ringGeo, glowMat(0x8a7458, 0.6, { side: THREE.DoubleSide }));
+  const w2 = fxRingD(0x8a7458, 0.6);
   w2.rotation.x = -Math.PI / 2; w2.position.set(p.x, gy + 2, p.z);
   addFx(w2, 3.5, (o, k) => { const s = 30 + Math.pow(k, 0.6) * 1900; o.scale.set(s, s, 1); o.material.opacity = 0.6 * (1 - k); });
   // --- 上空の凝結リング(ウィルソン雲) ---
-  const cr = new THREE.Mesh(ringGeo, glowMat(0xf0f4f8, 0.55, { side: THREE.DoubleSide }));
+  const cr = fxRingD(0xf0f4f8, 0.55);
   cr.rotation.x = -Math.PI / 2; cr.position.set(p.x, gy + 260, p.z);
   addFx(cr, 2.2, (o, k) => { const s = 80 + Math.pow(k, 0.7) * 850; o.scale.set(s, s, 1); o.material.opacity = 0.55 * (1 - k); });
   // --- 巨大な焦げ跡(放射状グラデーション・地形に沿う) ---
@@ -2104,13 +2171,15 @@ function destroyAround(p, R, depth = 0, wave = 0){
     if(Math.hypot(c.px - p.x, c.pz - p.z) <= CR){
       c.alive = false;
       carMesh.setMatrixAt(c.i, HIDDEN_MAT);
+      // 駐車車両は毎フレームの転送範囲外なので、この行列変更だけ個別に転送予約する
+      if(c.i >= movingCars) carMesh.instanceMatrix.addUpdateRange(c.i * 16, 16);
       stats.cDead++;
       stats.damage += CAR_VALUE;
     }
   }
   // 木(空間ハッシュで近傍セルのみ走査)
   const TR = R * 1.2;
-  const treeHit = [false, false, false];
+  const treeHit = new Set();   // 行列を書き換えたチャンクメッシュだけGPUへ再アップロード
   const t0x = cellOf(p.x - TR), t1x = cellOf(p.x + TR);
   const t0z = cellOf(p.z - TR), t1z = cellOf(p.z + TR);
   for(let cx = t0x; cx <= t1x; cx++) for(let cz = t0z; cz <= t1z; cz++){
@@ -2120,13 +2189,13 @@ function destroyAround(p, R, depth = 0, wave = 0){
       if(!t.alive) continue;
       if(Math.hypot(t.x - p.x, t.z - p.z) <= TR){
         t.alive = false;
-        treeMeshes[t.type].setMatrixAt(t.mi, HIDDEN_MAT);
-        treeHit[t.type] = true;
+        t.mesh.setMatrixAt(t.mi, HIDDEN_MAT);
+        treeHit.add(t.mesh);
         stats.tDead++;
       }
     }
   }
-  treeHit.forEach((h, ti) => { if(h) treeMeshes[ti].instanceMatrix.needsUpdate = true; });
+  for(const m of treeHit) m.instanceMatrix.needsUpdate = true;
 }
 
 const RUBBLE_COL = new THREE.Color(0x35312c);
@@ -2230,8 +2299,7 @@ function updateFx(dt){
     const f = fx[i];
     f.age += dt;
     if(f.age >= f.life){
-      scene.remove(f.mesh);
-      if(f.mesh.material) f.mesh.material.dispose();   // PointLight等はmaterialなし
+      releaseFx(f);
       fx.splice(i, 1);
       continue;
     }
@@ -2258,6 +2326,9 @@ function updateCars(dt){
     arr[o + 13] = p.h + p.hs * c.lane + 1.1;   // 事前計算した路面高+横断勾配
     arr[o + 14] = pz;
   }
+  // 毎フレーム変わるのは走行車両の領域だけ。駐車車両ぶんのGPU転送を省く
+  // (updateRangesはアップロード後に自動クリアされるので毎フレーム指定し直す)
+  carMesh.instanceMatrix.addUpdateRange(0, movingCars * 16);
   carMesh.instanceMatrix.needsUpdate = true;
 }
 

@@ -53,43 +53,68 @@ function terrainH(x, z){
   const distC = Math.hypot(x - cityCore.x, z - cityCore.z) / CITY_HALF;
   const flat = 0.25 + 0.75 * Math.min(1, Math.max(0, (distC - 0.15) / 0.75)); // 都心部は平坦
   let hh = h * tAmp * flat;
-  // 四隅の山と川
+  // 地形フィーチャ(隅の山・湾 / 辺全体の山脈・水辺)
   for(const f of cornerFeats){
+    if(f.kind === 'band'){
+      const du = bandDu(f, x, z);                        // 縁からの内向き距離
+      if(f.type === 'm'){
+        if(du < f.depth){ const k = 1 - du / f.depth; hh += f.amp * k * k; }
+      } else {
+        if(du < f.off + 60) hh -= 14 * Math.min(1, (f.off + 60 - du) / 120);
+      }
+      continue;
+    }
     const d = Math.hypot(x - f.x, z - f.z);
     if(f.type === 'm'){
       const t = d / f.r;
       if(t < 1){ const k = 1 - t * t; hh += f.amp * k * k; }
     } else {
-      const dr = Math.abs(d - f.r) / (f.w * 0.9);
-      if(dr < 1) hh -= (10 + f.w * 0.06) * (1 - dr * dr);   // 川筋は掘り下げる
+      // 湾: 岸から水底へ掘り下げる
+      if(d < f.r + 60) hh -= 14 * Math.min(1, (f.r + 60 - d) / 120);
     }
   }
   return hh;
 }
-// 地形フィーチャで建物が建てられない場所か(山腹・川べり)
+// 帯状フィーチャにおける、地図の縁からの内向き距離
+function bandDu(f, x, z){
+  return 2500 - (f.axis === 'x' ? x * f.side : z * f.side);
+}
+// 地形フィーチャで建物が建てられない場所か(山腹・水辺)
 function cornerBlocked(x, z){
   for(const f of cornerFeats){
+    if(f.kind === 'band'){
+      const du = bandDu(f, x, z);
+      if(f.type === 'm'){ if(du < f.depth * 0.8) return true; }
+      else if(du < f.off + 16) return true;
+      continue;
+    }
     const d = Math.hypot(x - f.x, z - f.z);
     if(f.type === 'm'){ if(d < f.r * 0.8) return true; }
-    else if(Math.abs(d - f.r) < f.w / 2 + 16) return true;
+    else if(d < f.r + 16) return true;
   }
   return false;
 }
 // 山の中か(道路も通さない)
 function inMountain(x, z){
   for(const f of cornerFeats){
-    if(f.type === 'm' && Math.hypot(x - f.x, z - f.z) < f.r * 0.82) return true;
+    if(f.type !== 'm') continue;
+    if(f.kind === 'band'){ if(bandDu(f, x, z) < f.depth * 0.82) return true; }
+    else if(Math.hypot(x - f.x, z - f.z) < f.r * 0.82) return true;
   }
   return false;
 }
-// 山にかかった道路を刈り取り、外側の区間だけ残す
+// 道路を通せない場所(山の中・水の中)
+function roadBlocked(x, z){
+  return inMountain(x, z) || inWater(x, z);
+}
+// 山・水にかかった道路を刈り取り、通れる区間だけ残す
 function cullMountainRoads(){
   const out = [];
   for(const rp of roadPaths){
     let cut = false, run = [];
     const runs = [];
     for(const p of rp.pts){
-      if(inMountain(p.x, p.z)){
+      if(roadBlocked(p.x, p.z)){
         cut = true;
         if(run.length) runs.push(run);
         run = [];
@@ -99,32 +124,33 @@ function cullMountainRoads(){
     if(!cut){ out.push(rp); continue; }
     // 環状道路は始点・終点の区間が地続きなので繋ぎ直す
     if(rp.loop && runs.length >= 2 &&
-       !inMountain(rp.pts[0].x, rp.pts[0].z) &&
-       !inMountain(rp.pts[rp.pts.length - 1].x, rp.pts[rp.pts.length - 1].z)){
+       !roadBlocked(rp.pts[0].x, rp.pts[0].z) &&
+       !roadBlocked(rp.pts[rp.pts.length - 1].x, rp.pts[rp.pts.length - 1].z)){
       runs[0] = runs.pop().concat(runs[0]);
     }
     for(const r2 of runs) if(r2.length >= 3) out.push({ pts: r2, w: rp.w, major: rp.major, loop: false });
   }
   roadPaths = out;
 }
-// 山にかかった路地は丸ごと消す
+// 山・水にかかった路地は丸ごと消す
 function cullMountainAlleys(){
   alleyPaths = alleyPaths.filter(al => {
     for(let i = 0; i < al.pts.length - 1; i++){
       const a = al.pts[i], b = al.pts[i + 1];
       const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 40));
       for(let k = 0; k <= n; k++){
-        if(inMountain(a.x + (b.x - a.x) * k / n, a.z + (b.z - a.z) * k / n)) return false;
+        if(roadBlocked(a.x + (b.x - a.x) * k / n, a.z + (b.z - a.z) * k / n)) return false;
       }
     }
     return true;
   });
 }
-// 川の水面の中か(木も生えない)
+// 水面の中か(木も生えない)。湾は隅の円内、帯は縁側すべてが水
 function inWater(x, z){
   for(const f of cornerFeats){
     if(f.type !== 'r') continue;
-    if(Math.abs(Math.hypot(x - f.x, z - f.z) - f.r) < f.w / 2) return true;
+    if(f.kind === 'band'){ if(bandDu(f, x, z) < f.off - 6) return true; }
+    else if(Math.hypot(x - f.x, z - f.z) < f.r - 6) return true;
   }
   return false;
 }
@@ -894,24 +920,29 @@ function generateCity(seedStr){
   const coreA = rng() * Math.PI * 2, coreR = rng() * 900;
   cityCore = { x: Math.cos(coreA) * coreR, z: Math.sin(coreA) * coreR };
   cityHouseTh = 0.5 + rng() * 0.2;   // 0.5(住宅多め) 〜 0.7(ビル多め)
-  // 四隅と四辺の中央は、平地 / 山 / 川のいずれかに
+  // 四隅は山か湾、四辺は1辺全体の山脈か水辺に(それ以外は平地)
   cornerFeats = [];
-  const featSpots = [
-    [-1, -1], [1, -1], [-1, 1], [1, 1],   // 四隅
-    [0, -1], [0, 1], [-1, 0], [1, 0],     // 各辺の中央
-  ];
-  for(const [sx, sz] of featSpots){
-    const corner = sx !== 0 && sz !== 0;
-    const roll = rng(), fr = rng(), fp = rng();
-    const th1 = corner ? 0.34 : 0.22, th2 = corner ? 0.67 : 0.44;  // 辺は控えめの確率
-    if(roll < th1){
-      cornerFeats.push({ type: 'm', x: sx * 2500, z: sz * 2500,
-        r: (corner ? 1100 : 950) + fr * 650, amp: 170 + fp * 260 });
-    } else if(roll < th2){
-      cornerFeats.push({ type: 'r', x: sx * 2500, z: sz * 2500,
-        r: (corner ? 650 : 550) + fr * 500, w: 70 + fp * 80 });
+  const corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
+  for(const [sx, sz] of corners){
+    const roll = rng(), fr = rng(), fp = rng(), ph = rng() * Math.PI * 2;
+    if(roll < 0.34){
+      cornerFeats.push({ type: 'm', kind: 'disc', x: sx * 2500, z: sz * 2500,
+        r: 1100 + fr * 650, amp: 170 + fp * 260 });
+    } else if(roll < 0.67){
+      cornerFeats.push({ type: 'r', kind: 'disc', x: sx * 2500, z: sz * 2500,
+        r: 700 + fr * 600, wig: 30 + fp * 50, ph });
     }
-    // それ以外は平地のまま
+  }
+  const edges = [['z', -1], ['z', 1], ['x', -1], ['x', 1]];   // [軸, どちらの縁か]
+  for(const [axis, side] of edges){
+    const roll = rng(), fr = rng(), fp = rng(), ph = rng() * Math.PI * 2;
+    if(roll < 0.22){
+      cornerFeats.push({ type: 'm', kind: 'band', axis, side,
+        depth: 500 + fr * 450, amp: 170 + fp * 260 });
+    } else if(roll < 0.44){
+      cornerFeats.push({ type: 'r', kind: 'band', axis, side,
+        off: 230 + fr * 300, wig: 30 + fp * 50, ph });
+    }
   }
   buildTerrain(rng);               // 起伏もシードで決まる
 
@@ -1043,9 +1074,25 @@ function generateCity(seedStr){
       }
     }
   }
-  // 山は公園以上の密度の森に覆われる(地図内の実面積を推定して本数を決める)
+  // 山は公園以上の密度の森に覆われる(山裾は民家と重ならないよう減衰)
   for(const f of cornerFeats){
     if(f.type !== 'm') continue;
+    if(f.kind === 'band'){
+      // 1辺全体の山脈の森
+      const target = Math.min(20000, Math.round(5300 * f.depth * 0.9 / 105));
+      let placed = 0;
+      for(let k = 0; k < target * 4 && placed < target; k++){
+        const t = -2650 + rng() * 5300;
+        const du = rng() * f.depth * 0.95;
+        const tn = du / f.depth;   // 0=縁 1=内側の裾
+        if(tn > 0.72 && rng() > Math.pow(Math.max(0, 1 - (tn - 0.72) / 0.26), 2)) continue;
+        const p = f.axis === 'x' ? { x: f.side * (2500 - du), z: t } : { x: t, z: f.side * (2500 - du) };
+        if(Math.abs(p.x) > 2560 || Math.abs(p.z) > 2560 || onRoad(p.x, p.z)) continue;
+        pushTree(p.x, p.z, 6 + rng() * 7, Math.floor(rng() * 3), rng);
+        placed++;
+      }
+      continue;
+    }
     let inMap = 0;
     for(let k = 0; k < 128; k++){
       const a = rng() * Math.PI * 2, rr = Math.sqrt(rng()) * f.r * 0.95;
@@ -1131,8 +1178,44 @@ function drawGround(){
     g.stroke();
   };
   for(const al of alleyPaths) strokeRoad(al, al.w, G.asphalt);   // 街区内の路地
-  // 四隅の地形フィーチャ(山の緑 / 川)。道路より先に描くと道路が橋・山道になる
+  // 地形フィーチャ(山の緑 / 湾・水辺)。道路より先に描く
   for(const f of cornerFeats){
+    if(f.kind === 'band'){
+      // 帯フィーチャの座標変換: t=縁に沿った位置, du=縁からの内向き距離
+      const bpt = (t, du) => f.axis === 'x'
+        ? { x: f.side * (2500 - du), z: t }
+        : { x: t, z: f.side * (2500 - du) };
+      if(f.type === 'm'){
+        // 1辺全体の山脈: 縁側は不透明、内側の裾でフェード
+        const pe = bpt(0, -100), pi = bpt(0, f.depth);
+        const grd = g.createLinearGradient(w2c(pe.x), w2c(pe.z), w2c(pi.x), w2c(pi.z));
+        grd.addColorStop(0, G.mtn1);
+        grd.addColorStop(0.78, G.mtn1);
+        grd.addColorStop(1, G.mtn2);
+        g.fillStyle = grd;
+        const c0 = bpt(-2700, f.depth), c1 = bpt(2700, -200);
+        g.fillRect(Math.min(w2c(c0.x), w2c(c1.x)), Math.min(w2c(c0.z), w2c(c1.z)),
+          Math.abs(w2c(c1.x) - w2c(c0.x)), Math.abs(w2c(c1.z) - w2c(c0.z)));
+      } else {
+        // 1辺全体の水辺: 岸線は揺らぎ、縁側は全て水(対岸なし)
+        const wig = t => f.wig * (0.5 + 0.5 * Math.sin(t / 380 + f.ph));
+        const fillBand = (duFn, color) => {
+          g.fillStyle = color;
+          g.beginPath();
+          for(let t = -2700; t <= 2700; t += 100){
+            const p = bpt(t, duFn(t));
+            t === -2700 ? g.moveTo(w2c(p.x), w2c(p.z)) : g.lineTo(w2c(p.x), w2c(p.z));
+          }
+          const e1 = bpt(2700, -300), e0 = bpt(-2700, -300);
+          g.lineTo(w2c(e1.x), w2c(e1.z));
+          g.lineTo(w2c(e0.x), w2c(e0.z));
+          g.closePath(); g.fill();
+        };
+        fillBand(t => f.off - wig(t) + 14, G.bank);
+        fillBand(t => f.off - wig(t), G.water);
+      }
+      continue;
+    }
     const px = w2c(f.x), pz = w2c(f.z);
     if(f.type === 'm'){
       // 道路を削った跡が透けないよう、8割の半径までは完全不透明で塗る
@@ -1143,11 +1226,20 @@ function drawGround(){
       g.fillStyle = grd;
       g.beginPath(); g.arc(px, pz, f.r * s, 0, Math.PI * 2); g.fill();
     } else {
-      g.lineCap = 'butt';
-      g.strokeStyle = G.bank; g.lineWidth = (f.w + 16) * s;
-      g.beginPath(); g.arc(px, pz, f.r * s, 0, Math.PI * 2); g.stroke();
-      g.strokeStyle = G.water; g.lineWidth = f.w * s;
-      g.beginPath(); g.arc(px, pz, f.r * s, 0, Math.PI * 2); g.stroke();
+      // 湾: 揺らぐ岸線の内側が全て水(対岸なし)
+      const wigA = a => f.wig * (0.5 + 0.5 * Math.sin(a * 3 + f.ph));
+      const fillBlob = (rFn, color) => {
+        g.fillStyle = color;
+        g.beginPath();
+        for(let i = 0; i <= 64; i++){
+          const a = i / 64 * Math.PI * 2, rr = rFn(a);
+          const qx = w2c(f.x + Math.cos(a) * rr), qz = w2c(f.z + Math.sin(a) * rr);
+          i ? g.lineTo(qx, qz) : g.moveTo(qx, qz);
+        }
+        g.closePath(); g.fill();
+      };
+      fillBlob(a => f.r - wigA(a) + 14, G.bank);
+      fillBlob(a => f.r - wigA(a), G.water);
     }
   }
   for(const rp of roadPaths) strokeRoad(rp, rp.w + 11, G.sidewalk);

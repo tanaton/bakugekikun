@@ -4242,6 +4242,7 @@ function mulberry32(a){ return function(){
 
 // ---------- 定数 ----------
 const CITY_HALF = 2500;          // 街の半径 (m) → 5km四方
+const MAP_HALF = 2700;           // 余白込みの世界半径。カメラ移動・着弾クランプ・空間ハッシュの原点
 const CAR_VALUE = 3000000;       // 車1台の被害額
 const FLOOR_H = 3.5;             // 1フロアの高さ
 const VALUE_PER_M2_FLOOR = 300000; // 床面積1m2あたりの資産額
@@ -4257,61 +4258,64 @@ function buildTerrain(rng){
   for(let i = 0; i < tGrid.length; i++) tGrid[i] = rng();
   tAmp = 45 + rng() * 55;        // 起伏の強さもシードで変わる
 }
-function tSample(gx, gz){
-  gx = Math.max(0, Math.min(TG_N - 1.001, gx));
-  gz = Math.max(0, Math.min(TG_N - 1.001, gz));
-  const x0 = Math.floor(gx), z0 = Math.floor(gz);
-  let fx = gx - x0, fz = gz - z0;
+// smoothstep補間付きバイリニア格子サンプラ(地形グリッドと街路ワープ場で共用)
+function gridSample(gr, N, u, v){
+  u = THREE.MathUtils.clamp(u, 0, N - 1.001);
+  v = THREE.MathUtils.clamp(v, 0, N - 1.001);
+  const x0 = Math.floor(u), z0 = Math.floor(v);
+  let fx = u - x0, fz = v - z0;
   fx = fx * fx * (3 - 2 * fx); fz = fz * fz * (3 - 2 * fz);
-  const i = z0 * TG_N + x0;
-  const a = tGrid[i], b = tGrid[i + 1], c = tGrid[i + TG_N], d = tGrid[i + TG_N + 1];
+  const i = z0 * N + x0;
+  const a = gr[i], b = gr[i + 1], c = gr[i + N], d = gr[i + N + 1];
   return a + (b - a) * fx + (c - a) * fz + (a - b - c + d) * fx * fz;
 }
 function terrainH(x, z){
   if(!tGrid) return 0;
   const u = (x + TG_SPAN / 2) / TG_SPAN * (TG_N - 1);
   const v = (z + TG_SPAN / 2) / TG_SPAN * (TG_N - 1);
-  const c1 = tSample(u * 0.28 + 2.3, v * 0.28 + 4.1);   // 大きなうねり
-  const c2 = tSample(u, v);                              // 細かい起伏
+  const c1 = gridSample(tGrid, TG_N, u * 0.28 + 2.3, v * 0.28 + 4.1);   // 大きなうねり
+  const c2 = gridSample(tGrid, TG_N, u, v);                              // 細かい起伏
   const h = (c1 - 0.5) * 1.6 + (c2 - 0.5) * 0.5;
   const distC = Math.hypot(x - cityCore.x, z - cityCore.z) / CITY_HALF;
-  const flat = 0.25 + 0.75 * Math.min(1, Math.max(0, (distC - 0.15) / 0.75)); // 都心部は平坦
+  const flat = 0.25 + 0.75 * THREE.MathUtils.clamp((distC - 0.15) / 0.75, 0, 1); // 都心部は平坦
   let hh = h * tAmp * flat;
   // 地形フィーチャ: 山は隆起、水域は固定水面レベルへ平坦化ブレンド
   let wb = 0;   // 水面ブレンド率(1=完全な水面)
   for(const f of cornerFeats){
-    if(f.kind === 'band'){
-      const du = bandDu(f, x, z);                        // 縁からの内向き距離
-      if(f.type === 'm'){
-        if(du < f.depth){ const k = 1 - du / f.depth; hh += f.amp * k * k; }
-      } else if(du < f.off + 90){
-        wb = Math.max(wb, Math.min(1, (f.off + 90 - du) / 140));
-      }
-      continue;
-    }
-    const d = Math.hypot(x - f.x, z - f.z);
     if(f.type === 'm'){
-      const t = d / f.r;
-      if(t < 1){ const k = 1 - t * t; hh += f.amp * k * k; }
-    } else if(d < f.r + 90){
-      wb = Math.max(wb, Math.min(1, (f.r + 90 - d) / 140));
+      const tn = mtnNorm(f, x, z);
+      // 高さプロファイルは意図的に band=線形の肩 / disc=釣鐘型 で異なる
+      if(tn < 1){ const k = f.kind === 'band' ? 1 - tn : 1 - tn * tn; hh += f.amp * k * k; }
+    } else {
+      const pen = waterPen(f, x, z);
+      if(pen > -90) wb = Math.max(wb, Math.min(1, (pen + 90) / 140));
     }
   }
-  if(wb > 0) hh = hh * (1 - wb) + (-12) * wb;   // 水面は起伏の影響を受けず平坦
+  if(wb > 0) hh = THREE.MathUtils.lerp(hh, -12, wb);   // 水面は起伏の影響を受けず平坦
   return hh;
 }
 // 帯状フィーチャにおける、地図の縁からの内向き距離
 function bandDu(f, x, z){
-  return 2500 - (f.axis === 'x' ? x * f.side : z * f.side);
+  return CITY_HALF - (f.axis === 'x' ? x * f.side : z * f.side);
+}
+// 帯状フィーチャ: (縁沿い位置t, 内向き距離du) → 世界座標(bandDuの逆変換)
+function bandPt(f, t, du){
+  return f.axis === 'x' ? { x: f.side * (CITY_HALF - du), z: t } : { x: t, z: f.side * (CITY_HALF - du) };
+}
+// 岸線の揺らぎ。3D水面メッシュと2D地面描画が同じ岸線を描くための共用定義
+function bandWig(f, t){ return f.wig * (0.5 + 0.5 * Math.sin(t / 380 + f.ph)); }
+function discWig(f, a){ return f.wig * (0.5 + 0.5 * Math.sin(a * 3 + f.ph)); }
+// 水域フィーチャ内側への侵入量(正=水側)。band/discの形状差を吸収する
+function waterPen(f, x, z){
+  return f.kind === 'band' ? f.off - bandDu(f, x, z) : f.r - Math.hypot(x - f.x, z - f.z);
+}
+// 山フィーチャの正規化距離(0=中心・縁, 1=裾)
+function mtnNorm(f, x, z){
+  return f.kind === 'band' ? bandDu(f, x, z) / f.depth : Math.hypot(x - f.x, z - f.z) / f.r;
 }
 // フィーチャfの影響領域に点が入っているか
 function featRegion(f, x, z){
-  if(f.kind === 'band'){
-    const du = bandDu(f, x, z);
-    return f.type === 'm' ? du < f.depth : du < f.off + 30;
-  }
-  const d = Math.hypot(x - f.x, z - f.z);
-  return f.type === 'm' ? d < f.r : d < f.r + 30;
+  return f.type === 'm' ? mtnNorm(f, x, z) < 1 : waterPen(f, x, z) > -30;
 }
 // 候補フィーチャが既存の「逆タイプ」(山⇔水)と重なるか。同種同士の連なりは許可
 function featConflicts(cand){
@@ -4325,16 +4329,17 @@ function featConflicts(cand){
     }
   } else {
     const dep = cand.type === 'm' ? cand.depth : cand.off + 20;
-    for(let t = -2500; t <= 2500; t += 250){
+    for(let t = -CITY_HALF; t <= CITY_HALF; t += 250){
       for(const du of [10, dep * 0.5, dep * 0.95]){
-        pts.push(cand.axis === 'x' ? [cand.side * (2500 - du), t] : [t, cand.side * (2500 - du)]);
+        const q = bandPt(cand, t, du);
+        pts.push([q.x, q.z]);
       }
     }
   }
   for(const f of cornerFeats){
     if(f.type === cand.type) continue;
     for(const [px, pz] of pts){
-      if(Math.abs(px) > 2700 || Math.abs(pz) > 2700) continue;
+      if(Math.abs(px) > MAP_HALF || Math.abs(pz) > MAP_HALF) continue;
       if(featRegion(f, px, pz)) return true;
     }
   }
@@ -4343,24 +4348,15 @@ function featConflicts(cand){
 // 地形フィーチャで建物が建てられない場所か(山腹・水辺)
 function cornerBlocked(x, z){
   for(const f of cornerFeats){
-    if(f.kind === 'band'){
-      const du = bandDu(f, x, z);
-      if(f.type === 'm'){ if(du < f.depth * 0.8) return true; }
-      else if(du < f.off + 16) return true;
-      continue;
-    }
-    const d = Math.hypot(x - f.x, z - f.z);
-    if(f.type === 'm'){ if(d < f.r * 0.8) return true; }
-    else if(d < f.r + 16) return true;
+    if(f.type === 'm'){ if(mtnNorm(f, x, z) < 0.8) return true; }
+    else if(waterPen(f, x, z) > -16) return true;
   }
   return false;
 }
 // 山の中か(道路も通さない)
 function inMountain(x, z){
   for(const f of cornerFeats){
-    if(f.type !== 'm') continue;
-    if(f.kind === 'band'){ if(bandDu(f, x, z) < f.depth * 0.82) return true; }
-    else if(Math.hypot(x - f.x, z - f.z) < f.r * 0.82) return true;
+    if(f.type === 'm' && mtnNorm(f, x, z) < 0.82) return true;
   }
   return false;
 }
@@ -4409,9 +4405,7 @@ function cullMountainAlleys(){
 // 水面の中か(木も生えない)。湾は隅の円内、帯は縁側すべてが水
 function inWater(x, z){
   for(const f of cornerFeats){
-    if(f.type !== 'r') continue;
-    if(f.kind === 'band'){ if(bandDu(f, x, z) < f.off - 6) return true; }
-    else if(Math.hypot(x - f.x, z - f.z) < f.r - 6) return true;
+    if(f.type === 'r' && waterPen(f, x, z) > 6) return true;
   }
   return false;
 }
@@ -4424,7 +4418,8 @@ function groundLevel(x, z, sx, sz){
 }
 
 // ---------- レンダラ / シーン ----------
-const canvas = document.getElementById('gl');
+const $ = id => document.getElementById(id);
+const canvas = $('gl');
 // r147当時の配色を維持するためカラーマネジメントは無効(hex値をそのまま使う旧パイプライン)
 THREE.ColorManagement.enabled = false;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -4482,7 +4477,7 @@ function applyTime(mode){
     waterMat.specular.set(T.ground.waterSpec);
     waterMat.shininess = T.ground.waterShine;
   }
-  document.getElementById('timeBtn').textContent = mode === 'day' ? '時間帯: 昼' : '時間帯: 夕暮れ';
+  $('timeBtn').textContent = mode === 'day' ? '時間帯: 昼' : '時間帯: 夕暮れ';
 }
 
 // ---------- カメラ操作 ----------
@@ -4503,13 +4498,13 @@ addEventListener('pointermove', e => {
   if(!dragging) return;
   cam.yaw   -= (e.clientX - lastX) * 0.005;
   cam.pitch += (e.clientY - lastY) * 0.004;
-  cam.pitch = Math.max(0.28, Math.min(1.5, cam.pitch));
+  cam.pitch = THREE.MathUtils.clamp(cam.pitch, 0.28, 1.5);
   lastX = e.clientX; lastY = e.clientY;
 });
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
   cam.dist *= Math.exp(e.deltaY * 0.0011);
-  cam.dist = Math.max(120, Math.min(4200, cam.dist));
+  cam.dist = THREE.MathUtils.clamp(cam.dist, 120, 4200);
 }, { passive: false });
 addEventListener('contextmenu', e => e.preventDefault());
 
@@ -4520,8 +4515,8 @@ function updateCamera(dt){
   if(keys.KeyS){ cam.focus.x += fx * sp; cam.focus.z += fz * sp; }
   if(keys.KeyA){ cam.focus.x -= fz * sp; cam.focus.z += fx * sp; }
   if(keys.KeyD){ cam.focus.x += fz * sp; cam.focus.z -= fx * sp; }
-  cam.focus.x = Math.max(-2700, Math.min(2700, cam.focus.x));
-  cam.focus.z = Math.max(-2700, Math.min(2700, cam.focus.z));
+  cam.focus.x = THREE.MathUtils.clamp(cam.focus.x, -MAP_HALF, MAP_HALF);
+  cam.focus.z = THREE.MathUtils.clamp(cam.focus.z, -MAP_HALF, MAP_HALF);
   cam.focus.y = terrainH(cam.focus.x, cam.focus.z);      // 注視点は地形に追従
 
   const cp = Math.cos(cam.pitch), sinP = Math.sin(cam.pitch);
@@ -4718,8 +4713,9 @@ function makeTreeGeometries(){
   ];
 }
 
-// 木を1本登録(w=樹冠の幅係数で個体差を出す)
-function pushTree(x, z, s, type, rng){
+// 木を1本登録(樹形と樹冠の幅係数wはここで抽選し個体差を出す)
+function pushTree(x, z, s, rng){
+  const type = Math.floor(rng() * 3);
   if(inWater(x, z)) return;                              // 川の中には生えない
   trees.push({ x, z, s, w: 0.8 + rng() * 0.45, type, alive: true });
 }
@@ -4754,7 +4750,10 @@ function makeTowerGeometry(){
   return geo;
 }
 
-function gridKey(x, z){ return (Math.floor((x + 2700) / GRID_CELL) * 4096) + Math.floor((z + 2700) / GRID_CELL); }
+// 空間ハッシュのセル座標とキー(登録側・検索側で必ずこれを使う)
+const cellOf = v => Math.floor((v + MAP_HALF) / GRID_CELL);
+const cellKey = (cx, cz) => cx * 4096 + cz;
+function gridKey(x, z){ return cellKey(cellOf(x), cellOf(z)); }
 
 // ---------- 道路パス(任意形状の道路をポリラインで統一的に扱う) ----------
 const ROAD_STEP = 20;    // パス上の点の間隔(m)
@@ -4798,20 +4797,22 @@ function carPose(road, s){
 // 道路上かどうかの粗い判定マスク(並木を交差点上に植えないため)
 const MASK_CELL = 20;
 let roadMask = new Set();
+const maskCellOf = v => Math.round((v + MAP_HALF) / MASK_CELL);
+const maskKey = (cx, cz) => cx * 8192 + cz;
 function buildRoadMask(){
   roadMask = new Set();
   for(const rp of roadPaths){
     const rad = Math.max(0, Math.floor((rp.w / 2 - 6) / MASK_CELL));
     for(const p of rp.pts){
-      const cx = Math.round((p.x + 2700) / MASK_CELL), cz = Math.round((p.z + 2700) / MASK_CELL);
+      const cx = maskCellOf(p.x), cz = maskCellOf(p.z);
       for(let ax = -rad; ax <= rad; ax++)
         for(let az = -rad; az <= rad; az++)
-          roadMask.add((cx + ax) * 8192 + (cz + az));
+          roadMask.add(maskKey(cx + ax, cz + az));
     }
   }
 }
 function onRoad(x, z){
-  return roadMask.has(Math.round((x + 2700) / MASK_CELL) * 8192 + Math.round((z + 2700) / MASK_CELL));
+  return roadMask.has(maskKey(maskCellOf(x), maskCellOf(z)));
 }
 
 function genRoadLines(rng){
@@ -4856,8 +4857,15 @@ function yardTrees(lot, n, rng, anywhere){
     const x = lot.x + lx * cosr + lz * sinr;
     const z = lot.z - lx * sinr + lz * cosr;
     if(Math.abs(x) > 2600 || Math.abs(z) > 2600) continue;
-    pushTree(x, z, 3 + rng() * 4.5, Math.floor(rng() * 3), rng);
+    pushTree(x, z, 3 + rng() * 4.5, rng);
   }
+}
+
+// 空き区画をポケットパーク(緑地デカール + 密植)にする
+function makePocketPark(lot, rng, minWD, minTrees){
+  lotDecals.push({ x: lot.x, z: lot.z, rot: lot.rot,
+    w: Math.max(minWD, lot.availW - 3), d: Math.max(minWD, lot.availD - 3), kind: 'park' });
+  yardTrees(lot, Math.min(45, Math.max(minTrees, Math.floor(lot.availW * lot.availD / 55))), rng, true);
 }
 
 // プラン生成器が出したロット {x,z,rot,availW,availD,distC,house} を建物にする
@@ -4867,8 +4875,7 @@ function addBuildingLot(lot, rng){
   if(cornerBlocked(x, z)) return;                        // 山腹・川べりには建てない
   if(lot.house){
     if(rng() < 0.14){                                    // 空き地 → 児童公園(緑地 + 密な木)
-      lotDecals.push({ x, z, rot, w: Math.max(7, availW - 3), d: Math.max(7, availD - 3), kind: 'park' });
-      yardTrees(lot, Math.min(45, Math.max(4, Math.floor(availW * availD / 55))), rng, true);
+      makePocketPark(lot, rng, 7, 4);
       return;
     }
     if(rng() < 0.05){                                    // 低層アパート
@@ -4897,8 +4904,7 @@ function addBuildingLot(lot, rng){
         lotDecals.push({ x, z, rot, w: Math.max(8, availW - 4), d: Math.max(8, availD - 4), kind: 'parking' });
       } else {
         // ビルの隙間の小公園: 緑地 + 森のような植栽
-        lotDecals.push({ x, z, rot, w: Math.max(8, availW - 3), d: Math.max(8, availD - 3), kind: 'park' });
-        yardTrees(lot, Math.min(45, Math.max(6, Math.floor(availW * availD / 55))), rng, true);
+        makePocketPark(lot, rng, 8, 6);
       }
       return;
     }
@@ -4926,21 +4932,12 @@ function genGridPlan(rng, organic){
   const wgx = new Float32Array(WN * WN), wgz = new Float32Array(WN * WN);
   for(let i = 0; i < WN * WN; i++){ wgx[i] = rng(); wgz[i] = rng(); }
   const amp = organic ? 110 + rng() * 130 : 0;
-  const wSamp = (gr, u, v) => {
-    u = Math.max(0, Math.min(WN - 1.001, u)); v = Math.max(0, Math.min(WN - 1.001, v));
-    const x0 = Math.floor(u), z0 = Math.floor(v);
-    let fx = u - x0, fz = v - z0;
-    fx = fx * fx * (3 - 2 * fx); fz = fz * fz * (3 - 2 * fz);
-    const i = z0 * WN + x0;
-    const a = gr[i], b = gr[i + 1], c = gr[i + WN], d = gr[i + WN + 1];
-    return a + (b - a) * fx + (c - a) * fz + (a - b - c + d) * fx * fz;
-  };
   const warp = (u, v) => {
     if(!amp) return { x: u, z: v };
-    const fade = Math.max(0, Math.min(1, 1 - (Math.max(Math.abs(u), Math.abs(v)) - 2200) / 300));
+    const fade = THREE.MathUtils.clamp(1 - (Math.max(Math.abs(u), Math.abs(v)) - 2200) / 300, 0, 1);
     const gu = (u + 3200) / 6400 * (WN - 1), gv = (v + 3200) / 6400 * (WN - 1);
-    return { x: u + (wSamp(wgx, gu, gv) - 0.5) * 2 * amp * fade,
-             z: v + (wSamp(wgz, gu, gv) - 0.5) * 2 * amp * fade };
+    return { x: u + (gridSample(wgx, WN, gu, gv) - 0.5) * 2 * amp * fade,
+             z: v + (gridSample(wgz, WN, gu, gv) - 0.5) * 2 * amp * fade };
   };
   const linesU = genRoadLines(rng), linesV = genRoadLines(rng);
   for(const l of linesU){
@@ -5007,8 +5004,8 @@ function genGridPlan(rng, organic){
 // ---------- 都市プラン: 放射環状(環状道路 + 放射道路) ----------
 function genRadialPlan(rng){
   // 中心は都心位置に追従(街が地図からはみ出さない範囲で)
-  const cx = Math.max(-450, Math.min(450, cityCore.x));
-  const cz = Math.max(-450, Math.min(450, cityCore.z));
+  const cx = THREE.MathUtils.clamp(cityCore.x, -450, 450);
+  const cz = THREE.MathUtils.clamp(cityCore.z, -450, 450);
   const rEdge = CITY_HALF - Math.hypot(cx, cz);
   const rings = [];
   let r = 150 + rng() * 80;
@@ -5181,7 +5178,7 @@ function generateCity(seedStr){
   missiles.length = 0; fx.length = 0; collapsing.length = 0;
   delayedBooms.length = 0; burnSites.length = 0; burningBldgs.length = 0;
   nukeEmitters.length = 0;
-  const nfEl = document.getElementById('nukeFlash');
+  const nfEl = $('nukeFlash');
   nfEl.style.transition = 'none'; nfEl.style.opacity = '0';
   clearDebris();
   for(const L of boomLights) L.intensity = 0;
@@ -5200,10 +5197,10 @@ function generateCity(seedStr){
     const roll = rng(), fr = rng(), fp = rng(), ph = rng() * Math.PI * 2;
     let cand = null;
     if(roll < 0.34){
-      cand = { type: 'm', kind: 'disc', x: sx * 2500, z: sz * 2500,
+      cand = { type: 'm', kind: 'disc', x: sx * CITY_HALF, z: sz * CITY_HALF,
         r: 1100 + fr * 650, amp: 170 + fp * 260 };
     } else if(roll < 0.67){
-      cand = { type: 'r', kind: 'disc', x: sx * 2500, z: sz * 2500,
+      cand = { type: 'r', kind: 'disc', x: sx * CITY_HALF, z: sz * CITY_HALF,
         r: 700 + fr * 600, wig: 30 + fp * 50, ph };
     }
     if(cand && !featConflicts(cand)) cornerFeats.push(cand);   // 山と水は重ねない
@@ -5262,13 +5259,9 @@ function generateCity(seedStr){
   // --- 建物・民家(プラン生成が出したロットから) ---
   for(const lot of pendingLots) addBuildingLot(lot, rng);
   drawGround();   // ポケットパーク等の区画装飾はロット生成で決まるため、この後に描く
-  // 通し番号と、種類別メッシュ内の番号を採番
+  // 種類別メッシュ内の番号を採番
   const counts = new Array(HOUSE_K0 + ROOF_COLS.length).fill(0);
-  for(let i = 0; i < buildings.length; i++){
-    const b = buildings[i];
-    b.i = i;
-    b.mi = counts[b.k]++;
-  }
+  for(const b of buildings) b.mi = counts[b.k]++;
 
   emissiveMats = [];
   const mkFacade = (t, eScale) => {
@@ -5297,7 +5290,7 @@ function generateCity(seedStr){
     bMeshes[b.k].setColorAt(b.mi, b.color);
     const k = gridKey(b.x, b.z);
     if(!grid.has(k)) grid.set(k, []);
-    grid.get(k).push(b.i);
+    grid.get(k).push(b);
   }
   for(let t = 0; t < bMeshes.length; t++){
     if(counts[t]) bMeshes[t].instanceColor.needsUpdate = true;
@@ -5331,7 +5324,7 @@ function generateCity(seedStr){
   for(const job of parkTreeJobs){
     for(let k = 0; k < job.n; k++){
       const pt = job.sample();
-      pushTree(pt.x, pt.z, 5 + rng() * 8, Math.floor(rng() * 3), rng);
+      pushTree(pt.x, pt.z, 5 + rng() * 8, rng);
     }
   }
   buildRoadMask();
@@ -5348,7 +5341,7 @@ function generateCity(seedStr){
       for(const sgn of [1, -1]){
         const tx = p.x + p.dz * off * sgn, tz = p.z - p.dx * off * sgn;
         if(Math.abs(tx) > 2550 || Math.abs(tz) > 2550 || onRoad(tx, tz)) continue;  // 交差点上には植えない
-        pushTree(tx, tz, 4.5 + rng() * 4, Math.floor(rng() * 3), rng);  // 樹形は1本ごとにランダム
+        pushTree(tx, tz, 4.5 + rng() * 4, rng);
       }
     }
   }
@@ -5364,9 +5357,9 @@ function generateCity(seedStr){
         const du = rng() * f.depth * 0.95;
         const tn = du / f.depth;   // 0=縁 1=内側の裾
         if(tn > 0.72 && rng() > Math.pow(Math.max(0, 1 - (tn - 0.72) / 0.26), 2)) continue;
-        const p = f.axis === 'x' ? { x: f.side * (2500 - du), z: t } : { x: t, z: f.side * (2500 - du) };
+        const p = bandPt(f, t, du);
         if(Math.abs(p.x) > 2560 || Math.abs(p.z) > 2560 || onRoad(p.x, p.z)) continue;
-        pushTree(p.x, p.z, 6 + rng() * 7, Math.floor(rng() * 3), rng);
+        pushTree(p.x, p.z, 6 + rng() * 7, rng);
         placed++;
       }
       continue;
@@ -5385,7 +5378,7 @@ function generateCity(seedStr){
       if(t > 0.72 && rng() > Math.pow(Math.max(0, 1 - (t - 0.72) / 0.26), 2)) continue;
       const tx = f.x + Math.cos(a) * rr, tz = f.z + Math.sin(a) * rr;
       if(Math.abs(tx) > 2560 || Math.abs(tz) > 2560 || onRoad(tx, tz)) continue;
-      pushTree(tx, tz, 6 + rng() * 7, Math.floor(rng() * 3), rng);
+      pushTree(tx, tz, 6 + rng() * 7, rng);
       placed++;
     }
   }
@@ -5415,9 +5408,9 @@ function generateCity(seedStr){
   }
 
   stats.bTotal = buildings.length;
-  document.getElementById('planName').textContent =
+  $('planName').textContent =
     '都市プラン: ' + ({ grid: '碁盤目', organic: '有機的街路', radial: '放射環状' })[cityPlan];
-  updateHUD(true);
+  updateHUD();
 }
 
 // ---------- 川の水面(アニメーションするオーバーレイメッシュ) ----------
@@ -5462,23 +5455,21 @@ function buildWaterSurface(){
     bumpMap: waterTex, bumpScale: 3,
     specular: new THREE.Color(TG.waterSpec), shininess: TG.waterShine
   });
-  const S = 2700, cl = v => Math.max(-S, Math.min(S, v));
+  const S = MAP_HALF, cl = v => THREE.MathUtils.clamp(v, -S, S);
   let li = 0;   // 川同士の重なりでZファイティングしないよう1枚ごとに高さをずらす
   for(const f of feats){
     const shape = new THREE.Shape();
     if(f.kind === 'band'){
-      const wig = t => f.wig * (0.5 + 0.5 * Math.sin(t / 380 + f.ph));
-      const pt = (t, du) => f.axis === 'x' ? [f.side * (2500 - du), t] : [t, f.side * (2500 - du)];
       for(let t = -S; t <= S; t += 100){
-        const [px, pz] = pt(t, f.off - wig(t));
-        t === -S ? shape.moveTo(px, -pz) : shape.lineTo(px, -pz);
+        const p = bandPt(f, t, f.off - bandWig(f, t));
+        t === -S ? shape.moveTo(p.x, -p.z) : shape.lineTo(p.x, -p.z);
       }
-      const [x1, z1] = pt(S, -200), [x0, z0] = pt(-S, -200);
-      shape.lineTo(x1, -z1); shape.lineTo(x0, -z0);
+      const p1 = bandPt(f, S, -200), p0 = bandPt(f, -S, -200);
+      shape.lineTo(p1.x, -p1.z); shape.lineTo(p0.x, -p0.z);
     } else {
       for(let i = 0; i <= 64; i++){
         const a = i / 64 * Math.PI * 2;
-        const rr = f.r - f.wig * (0.5 + 0.5 * Math.sin(a * 3 + f.ph));
+        const rr = f.r - discWig(f, a);
         const px = cl(f.x + Math.cos(a) * rr), pz = cl(f.z + Math.sin(a) * rr);
         i ? shape.lineTo(px, -pz) : shape.moveTo(px, -pz);
       }
@@ -5496,13 +5487,17 @@ function drawGround(){
   const TEX = 2048, WORLD = 5400, s = TEX / WORLD;
   const w2c = v => (v + WORLD / 2) * s;
   const G = TIMES[timeMode].ground, g = gCtx;
+  // ポリラインをcanvasパスに起こす(塗り・道路・センターラインで共用)
+  const trace = (pts, close) => {
+    g.beginPath();
+    pts.forEach((p, i) => i ? g.lineTo(w2c(p.x), w2c(p.z)) : g.moveTo(w2c(p.x), w2c(p.z)));
+    if(close) g.closePath();
+  };
   g.setLineDash([]);
   g.fillStyle = G.base; g.fillRect(0, 0, TEX, TEX);
   // 街区の塗り分け
   for(const poly of groundPolys){
-    g.beginPath();
-    poly.pts.forEach((p, i) => i ? g.lineTo(w2c(p.x), w2c(p.z)) : g.moveTo(w2c(p.x), w2c(p.z)));
-    g.closePath();
+    trace(poly.pts, true);
     g.fillStyle = poly.kind === 'park' ? G.park : poly.kind === 'house' ? G.house : (poly.v ? G.block1 : G.block2);
     g.fill();
   }
@@ -5521,9 +5516,7 @@ function drawGround(){
   const strokeRoad = (rp, width, style) => {
     g.strokeStyle = style; g.lineWidth = Math.max(1, width * s);
     g.lineJoin = 'round'; g.lineCap = 'round';
-    g.beginPath();
-    rp.pts.forEach((p, i) => i ? g.lineTo(w2c(p.x), w2c(p.z)) : g.moveTo(w2c(p.x), w2c(p.z)));
-    if(rp.loop) g.closePath();
+    trace(rp.pts, rp.loop);
     g.stroke();
   };
   for(const al of alleyPaths) strokeRoad(al, al.w, G.asphalt);   // 街区内の路地
@@ -5533,38 +5526,33 @@ function drawGround(){
   const bankFills = [], waterFills = [];
   for(const f of cornerFeats){
     if(f.kind === 'band'){
-      // 帯フィーチャの座標変換: t=縁に沿った位置, du=縁からの内向き距離
-      const bpt = (t, du) => f.axis === 'x'
-        ? { x: f.side * (2500 - du), z: t }
-        : { x: t, z: f.side * (2500 - du) };
       if(f.type === 'm'){
         // 1辺全体の山脈: 縁側は不透明、内側の裾でフェード
-        const pe = bpt(0, -100), pi = bpt(0, f.depth);
+        const pe = bandPt(f, 0, -100), pi = bandPt(f, 0, f.depth);
         const grd = g.createLinearGradient(w2c(pe.x), w2c(pe.z), w2c(pi.x), w2c(pi.z));
         grd.addColorStop(0, G.mtn1);
         grd.addColorStop(0.78, G.mtn1);
         grd.addColorStop(1, G.mtn2);
         g.fillStyle = grd;
-        const c0 = bpt(-2700, f.depth), c1 = bpt(2700, -200);
+        const c0 = bandPt(f, -MAP_HALF, f.depth), c1 = bandPt(f, MAP_HALF, -200);
         g.fillRect(Math.min(w2c(c0.x), w2c(c1.x)), Math.min(w2c(c0.z), w2c(c1.z)),
           Math.abs(w2c(c1.x) - w2c(c0.x)), Math.abs(w2c(c1.z) - w2c(c0.z)));
       } else {
         // 1辺全体の水辺: 岸線は揺らぎ、縁側は全て水(対岸なし)
-        const wig = t => f.wig * (0.5 + 0.5 * Math.sin(t / 380 + f.ph));
         const fillBand = (duFn, color) => {
           g.fillStyle = color;
           g.beginPath();
-          for(let t = -2700; t <= 2700; t += 100){
-            const p = bpt(t, duFn(t));
-            t === -2700 ? g.moveTo(w2c(p.x), w2c(p.z)) : g.lineTo(w2c(p.x), w2c(p.z));
+          for(let t = -MAP_HALF; t <= MAP_HALF; t += 100){
+            const p = bandPt(f, t, duFn(t));
+            t === -MAP_HALF ? g.moveTo(w2c(p.x), w2c(p.z)) : g.lineTo(w2c(p.x), w2c(p.z));
           }
-          const e1 = bpt(2700, -300), e0 = bpt(-2700, -300);
+          const e1 = bandPt(f, MAP_HALF, -300), e0 = bandPt(f, -MAP_HALF, -300);
           g.lineTo(w2c(e1.x), w2c(e1.z));
           g.lineTo(w2c(e0.x), w2c(e0.z));
           g.closePath(); g.fill();
         };
-        bankFills.push(() => fillBand(t => f.off - wig(t) + 14, G.bank));
-        waterFills.push(() => fillBand(t => f.off - wig(t), G.water));
+        bankFills.push(() => fillBand(t => f.off - bandWig(f, t) + 14, G.bank));
+        waterFills.push(() => fillBand(t => f.off - bandWig(f, t), G.water));
       }
       continue;
     }
@@ -5579,7 +5567,6 @@ function drawGround(){
       g.beginPath(); g.arc(px, pz, f.r * s, 0, Math.PI * 2); g.fill();
     } else {
       // 湾: 揺らぐ岸線の内側が全て水(対岸なし)
-      const wigA = a => f.wig * (0.5 + 0.5 * Math.sin(a * 3 + f.ph));
       const fillBlob = (rFn, color) => {
         g.fillStyle = color;
         g.beginPath();
@@ -5590,8 +5577,8 @@ function drawGround(){
         }
         g.closePath(); g.fill();
       };
-      bankFills.push(() => fillBlob(a => f.r - wigA(a) + 14, G.bank));
-      waterFills.push(() => fillBlob(a => f.r - wigA(a), G.water));
+      bankFills.push(() => fillBlob(a => f.r - discWig(f, a) + 14, G.bank));
+      waterFills.push(() => fillBlob(a => f.r - discWig(f, a), G.water));
     }
   }
   for(const d of bankFills) d();
@@ -5599,14 +5586,7 @@ function drawGround(){
   for(const rp of roadPaths) strokeRoad(rp, rp.w + 11, G.sidewalk);
   for(const rp of roadPaths) strokeRoad(rp, rp.w, G.asphalt);
   g.setLineDash([6, 8]);
-  g.lineWidth = 1; g.strokeStyle = G.lane;
-  for(const rp of roadPaths){
-    if(!rp.major) continue;
-    g.beginPath();
-    rp.pts.forEach((p, i) => i ? g.lineTo(w2c(p.x), w2c(p.z)) : g.moveTo(w2c(p.x), w2c(p.z)));
-    if(rp.loop) g.closePath();
-    g.stroke();
-  }
+  for(const rp of roadPaths) if(rp.major) strokeRoad(rp, 1 / s, G.lane);   // センターライン(1px)
   g.setLineDash([]);
   gTex.needsUpdate = true;
 }
@@ -5684,6 +5664,7 @@ class ParticlePool {
     this.parts.push(p);
   }
   update(dt){
+    if(!this.parts.length) return;   // 空のときはGPU転送も省く
     for(let i = this.parts.length - 1; i >= 0; i--){
       const p = this.parts[i];
       p.age += dt;
@@ -5748,11 +5729,11 @@ scene.add(debrisMesh);
 const debrisList = [];
 let debrisCursor = 0;
 const debrisCols = [0x4a4a4e, 0x6a655c, 0x8a857a, 0x3a3d44, 0x7a5a48];
+// 破壊済みインスタンスを画面外へ隠す共用行列(瓦礫・車・木)
+const HIDDEN_MAT = new THREE.Matrix4().makeScale(0.001, 0.001, 0.001).setPosition(0, -100, 0);
 function clearDebris(){
   debrisList.length = 0;
-  dummy.position.set(0, -100, 0); dummy.rotation.set(0, 0, 0);
-  dummy.scale.set(0.001, 0.001, 0.001); dummy.updateMatrix();
-  for(let i = 0; i < DEBRIS_N; i++) debrisMesh.setMatrixAt(i, dummy.matrix);
+  for(let i = 0; i < DEBRIS_N; i++) debrisMesh.setMatrixAt(i, HIDDEN_MAT);
   debrisMesh.instanceMatrix.needsUpdate = true;
 }
 clearDebris();
@@ -5766,6 +5747,7 @@ function spawnDebris(x, y, z, pow){
     size: 0.9 + Math.random() * 3.2, life: 2.2 + Math.random() * 2.4, age: 0
   };
   debrisMesh.setColorAt(d.slot, new THREE.Color(debrisCols[Math.floor(Math.random() * debrisCols.length)]));
+  debrisMesh.instanceColor.needsUpdate = true;   // 色が変わるのはspawn時だけ
   debrisCursor = (debrisCursor + 1) % DEBRIS_N;
   const old = debrisList.findIndex(o => o.slot === d.slot);  // スロットを奪われた古い瓦礫は消す
   if(old >= 0) debrisList.splice(old, 1);
@@ -5777,9 +5759,7 @@ function updateDebris(dt){
     const d = debrisList[i];
     d.age += dt;
     if(d.age >= d.life){
-      dummy.position.set(0, -100, 0); dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(0.001, 0.001, 0.001); dummy.updateMatrix();
-      debrisMesh.setMatrixAt(d.slot, dummy.matrix);
+      debrisMesh.setMatrixAt(d.slot, HIDDEN_MAT);
       debrisList.splice(i, 1);
       continue;
     }
@@ -5799,7 +5779,6 @@ function updateDebris(dt){
     debrisMesh.setMatrixAt(d.slot, dummy.matrix);
   }
   debrisMesh.instanceMatrix.needsUpdate = true;
-  if(debrisMesh.instanceColor) debrisMesh.instanceColor.needsUpdate = true;
 }
 
 // 破壊された建物がしばらく燃え続ける
@@ -5834,26 +5813,43 @@ missileGeo.rotateX(Math.PI / 2); // +Z向き
 const missileMat = new THREE.MeshBasicMaterial({ color: 0xffd9a0 });
 const ringGeo = new THREE.RingGeometry(0.85, 1, 48);
 const flashGeo = new THREE.SphereGeometry(1, 16, 12);
-const scorchGeo = new THREE.CircleGeometry(1, 32);
-// 焦げ跡テクスチャ: 戦術核と同系の放射状グラデーション(全爆発で共用)
-const scorchTex = (() => {
+// 発光エフェクト用マテリアル(加算合成・両面などは opts で上書き)
+const glowMat = (color, opacity, opts) => new THREE.MeshBasicMaterial(
+  Object.assign({ color, transparent: true, opacity, depthWrite: false }, opts));
+// 焦げ跡: 放射状グラデーションのデカール用マテリアル(全爆発で共用・生成は起動時1回)
+function makeScorchMaterial(innerR, stops){
   const c = document.createElement('canvas'); c.width = c.height = 128;
   const x = c.getContext('2d');
-  const g = x.createRadialGradient(64, 64, 4, 64, 64, 64);
-  g.addColorStop(0, 'rgba(8,8,8,0.9)');
-  g.addColorStop(0.45, 'rgba(12,11,9,0.78)');
-  g.addColorStop(0.75, 'rgba(16,13,11,0.4)');
-  g.addColorStop(1, 'rgba(20,16,12,0)');
+  const g = x.createRadialGradient(64, 64, innerR, 64, 64, 64);
+  for(const [o, col] of stops) g.addColorStop(o, col);
   x.fillStyle = g; x.fillRect(0, 0, 128, 128);
-  return new THREE.CanvasTexture(c);
-})();
-const scorchMat = new THREE.MeshBasicMaterial({ map: scorchTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+  return new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c),
+    transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+}
+const scorchMat = makeScorchMaterial(4, [
+  [0, 'rgba(8,8,8,0.9)'], [0.45, 'rgba(12,11,9,0.78)'], [0.75, 'rgba(16,13,11,0.4)'], [1, 'rgba(20,16,12,0)']]);
+const nukeScorchMat = makeScorchMaterial(6, [
+  [0, 'rgba(8,8,8,0.92)'], [0.55, 'rgba(14,12,10,0.75)'], [1, 'rgba(20,16,12,0)']]);
+// 焦げ跡デカール: 内部にも頂点を持つ格子を地形に沿わせて密着させる
+function addScorch(p, gy, size, segs, lift, mat){
+  const sg = new THREE.PlaneGeometry(size, size, segs, segs);
+  sg.rotateX(-Math.PI / 2);
+  const spos = sg.getAttribute('position');
+  for(let i = 0; i < spos.count; i++){
+    const wx = spos.getX(i) + p.x, wz = spos.getZ(i) + p.z;
+    // 水域にかかる頂点は水面下へ沈め、不透明な水面で隠す
+    spos.setY(i, terrainH(wx, wz) - gy + (inWater(wx, wz) ? -3 : lift));
+  }
+  const mesh = new THREE.Mesh(sg, mat);
+  mesh.position.set(p.x, gy, p.z);
+  cityGroup.add(mesh);
+}
 
 const raycaster = new THREE.Raycaster();
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
-let weapon = 'single';           // 'single' | 'cluster'
 function requestStrike(px, py){
+  const weapon = WEAPONS[weaponIdx][0];
   const ndc = new THREE.Vector2((px / innerWidth) * 2 - 1, -(py / innerHeight) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
   let hit = null;
@@ -5865,8 +5861,8 @@ function requestStrike(px, py){
     hit = new THREE.Vector3();
     if(!raycaster.ray.intersectPlane(groundPlane, hit)) return;
   }
-  hit.x = Math.max(-2700, Math.min(2700, hit.x));
-  hit.z = Math.max(-2700, Math.min(2700, hit.z));
+  hit.x = THREE.MathUtils.clamp(hit.x, -MAP_HALF, MAP_HALF);
+  hit.z = THREE.MathUtils.clamp(hit.z, -MAP_HALF, MAP_HALF);
   hit.y = terrainH(hit.x, hit.z);
 
   const nuke = weapon === 'nuke';
@@ -5880,17 +5876,17 @@ function requestStrike(px, py){
   scene.add(mesh);
 
   // 着弾点マーカー
-  const marker = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
-    color: nuke ? 0xff2200 : 0xff5533, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }));
+  const marker = new THREE.Mesh(ringGeo,
+    glowMat(nuke ? 0xff2200 : 0xff5533, 0.9, { side: THREE.DoubleSide }));
   marker.rotation.x = -Math.PI / 2;
   marker.position.set(hit.x, hit.y + 2.5, hit.z);
   scene.add(marker);
 
   missiles.push({ pos: start, vel, target: hit, impactY: hit.y, mesh, marker, trailT: 0,
-    cluster: weapon === 'cluster', nuke, split: false, sub: false });
+    cluster: weapon === 'cluster', nuke, sub: false });
   stats.mCount++;
   playWhoosh();
-  document.getElementById('hint').classList.add('gone');
+  $('hint').classList.add('gone');
 }
 
 function updateMissiles(dt){
@@ -5914,9 +5910,8 @@ function updateMissiles(dt){
       const sc = 14 + 6 * Math.sin(performance.now() * 0.01);
       m.marker.scale.set(sc, sc, 1);
     }
-    // クラスター弾: 上空で子弾に分裂
-    if(m.cluster && !m.split && m.pos.y <= m.impactY + 380){
-      m.split = true;
+    // クラスター弾: 上空で子弾に分裂(分裂後の親は即座に配列から消える)
+    if(m.cluster && m.pos.y <= m.impactY + 380){
       scene.remove(m.mesh);
       if(m.marker){ scene.remove(m.marker); m.marker.material.dispose(); }
       for(let j = 0; j < 24; j++){                       // 分裂の閃光
@@ -5930,8 +5925,8 @@ function updateMissiles(dt){
       const n = 7 + Math.floor(Math.random() * 3);
       for(let j = 0; j < n; j++){
         const a = Math.random() * Math.PI * 2, rr = 25 + Math.random() * 150;
-        const tx = Math.max(-2700, Math.min(2700, m.target.x + Math.cos(a) * rr));
-        const tz = Math.max(-2700, Math.min(2700, m.target.z + Math.sin(a) * rr));
+        const tx = THREE.MathUtils.clamp(m.target.x + Math.cos(a) * rr, -MAP_HALF, MAP_HALF);
+        const tz = THREE.MathUtils.clamp(m.target.z + Math.sin(a) * rr, -MAP_HALF, MAP_HALF);
         const ty = terrainH(tx, tz);
         const sm = new THREE.Mesh(missileGeo, missileMat);
         sm.scale.set(0.5, 0.5, 0.5);
@@ -5940,7 +5935,7 @@ function updateMissiles(dt){
         sm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), vel.clone().normalize());
         scene.add(sm);
         missiles.push({ pos: m.pos.clone(), vel, target: new THREE.Vector3(tx, ty, tz), impactY: ty,
-          mesh: sm, marker: null, trailT: Math.random() * 0.008, cluster: false, split: false, sub: true });
+          mesh: sm, marker: null, trailT: Math.random() * 0.008, cluster: false, sub: true });
       }
       missiles.splice(i, 1);
       continue;
@@ -5967,44 +5962,27 @@ function detonate(p, R = 105){
   const gy = p.y || 0;
   flashLight(p.x, p.z, 7 * f, gy);
   // --- 閃光 ---
-  const flash = new THREE.Mesh(flashGeo, new THREE.MeshBasicMaterial({
-    color: 0xfff7e0, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }));
+  const flash = new THREE.Mesh(flashGeo, glowMat(0xfff7e0, 1, { blending: THREE.AdditiveBlending }));
   flash.position.set(p.x, gy + 10, p.z);
   addFx(flash, 0.25, (o, k) => { const s = (12 + k * 300) * f; o.scale.set(s, s, s); o.material.opacity = 1 - k; });
   // --- 火球(白熱コア + 外炎の二層) ---
-  const core = new THREE.Mesh(flashGeo, new THREE.MeshBasicMaterial({
-    color: 0xffd07a, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }));
+  const core = new THREE.Mesh(flashGeo, glowMat(0xffd07a, 1, { blending: THREE.AdditiveBlending }));
   core.position.set(p.x, gy + 8, p.z);
   addFx(core, 0.6, (o, k) => { const s = (6 + Math.pow(k, 0.4) * 70) * f; o.scale.set(s, s * 1.3, s); o.material.opacity = 1 - k; });
-  const ball = new THREE.Mesh(flashGeo, new THREE.MeshBasicMaterial({
-    color: 0xff5a1c, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+  const ball = new THREE.Mesh(flashGeo, glowMat(0xff5a1c, 0.9, { blending: THREE.AdditiveBlending }));
   ball.position.set(p.x, gy + 6, p.z);
   addFx(ball, 1.0, (o, k) => { const s = (8 + Math.pow(k, 0.45) * 130) * f; o.scale.set(s, s * 1.2, s);
     o.position.y = gy + 6 + k * 45 * f; o.material.opacity = 0.9 * (1 - k); });
   // --- 衝撃波リング(発光 + 土埃の二重) ---
-  const wave = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
-    color: 0xffd9a8, transparent: true, opacity: 0.95, side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending, depthWrite: false }));
+  const wave = new THREE.Mesh(ringGeo,
+    glowMat(0xffd9a8, 0.95, { side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
   wave.rotation.x = -Math.PI / 2; wave.position.set(p.x, gy + 2.5, p.z);
   addFx(wave, 0.7, (o, k) => { const s = (8 + Math.pow(k, 0.55) * 420) * f; o.scale.set(s, s, 1); o.material.opacity = 0.95 * (1 - k); });
-  const wave2 = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
-    color: 0x8a7458, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
+  const wave2 = new THREE.Mesh(ringGeo, glowMat(0x8a7458, 0.5, { side: THREE.DoubleSide }));
   wave2.rotation.x = -Math.PI / 2; wave2.position.set(p.x, gy + 1.8, p.z);
   addFx(wave2, 1.5, (o, k) => { const s = (12 + Math.pow(k, 0.6) * 520) * f; o.scale.set(s, s, 1); o.material.opacity = 0.5 * (1 - k); });
-  // --- 焦げ跡(放射状グラデーション。内部にも頂点を持つ格子で起伏に密着させる) ---
-  if(!inWater(p.x, p.z)){   // 水中への着弾は跡を残さない
-    const sg = new THREE.PlaneGeometry(R * 3.2, R * 3.2, 16, 16);
-    sg.rotateX(-Math.PI / 2);
-    const spos = sg.getAttribute('position');
-    for(let i = 0; i < spos.count; i++){
-      const wx = spos.getX(i) + p.x, wz = spos.getZ(i) + p.z;
-      // 水域にかかる頂点は水面下へ沈め、不透明な水面で隠す
-      spos.setY(i, terrainH(wx, wz) - gy + (inWater(wx, wz) ? -3 : 0.5));
-    }
-    const scorch = new THREE.Mesh(sg, scorchMat);
-    scorch.position.set(p.x, gy, p.z);
-    cityGroup.add(scorch);
-  }
+  // --- 焦げ跡(水中への着弾は跡を残さない) ---
+  if(!inWater(p.x, p.z)) addScorch(p, gy, R * 3.2, 16, 0.5, scorchMat);
   // --- 火球パーティクル(白核 → 橙 → 深紅の三層) ---
   const cnt = n => Math.max(4, Math.round(n * f));
   for(let i = 0; i < cnt(45); i++){
@@ -6079,8 +6057,7 @@ function detonate(p, R = 105){
 function miniBoom(d){
   const gy = terrainH(d.x, d.z);
   flashLight(d.x, d.z, 3.5, gy);
-  const ball = new THREE.Mesh(flashGeo, new THREE.MeshBasicMaterial({
-    color: 0xff7a30, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
+  const ball = new THREE.Mesh(flashGeo, glowMat(0xff7a30, 0.95, { blending: THREE.AdditiveBlending }));
   ball.position.set(d.x, gy + 6, d.z);
   addFx(ball, 0.5, (o, k) => { const s = 4 + Math.pow(k, 0.5) * 42; o.scale.set(s, s * 1.2, s); o.material.opacity = 0.95 * (1 - k); });
   for(let i = 0; i < 45; i++){
@@ -6143,7 +6120,7 @@ function detonateNuke(p){
   const R = 420;                     // 全壊半径
   const gy = p.y || 0;
   // --- 画面全体が白く飛ぶ ---
-  const nf = document.getElementById('nukeFlash');
+  const nf = $('nukeFlash');
   nf.style.transition = 'none';
   nf.style.opacity = '0.95';
   void nf.offsetWidth;
@@ -6155,14 +6132,12 @@ function detonateNuke(p){
   addFx(NL, 4, (o, k) => { o.intensity = 18 * LIGHT_SCALE * (1 - k) * (1 - k); });
   flashLight(p.x, p.z, 10, gy);
   // --- 白熱コア ---
-  const core = new THREE.Mesh(flashGeo, new THREE.MeshBasicMaterial({
-    color: 0xfffbee, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false }));
+  const core = new THREE.Mesh(flashGeo, glowMat(0xfffbee, 1, { blending: THREE.AdditiveBlending }));
   core.position.set(p.x, gy + 40, p.z);
   addFx(core, 1.2, (o, k) => { const s = 20 + Math.pow(k, 0.4) * 190; o.scale.set(s, s, s); o.material.opacity = 1 - k; });
   // --- 上昇する大火球(白 → 橙 → 赤黒) ---
   const fbC1 = new THREE.Color(0xffe6a0), fbC2 = new THREE.Color(0xff3c08);
-  const fb = new THREE.Mesh(flashGeo, new THREE.MeshBasicMaterial({
-    color: 0xffe6a0, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false }));
+  const fb = new THREE.Mesh(flashGeo, glowMat(0xffe6a0, 0.95, { blending: THREE.AdditiveBlending }));
   fb.position.set(p.x, gy + 40, p.z);
   addFx(fb, 4.5, (o, k) => {
     const s = 40 + Math.pow(k, 0.5) * 260;
@@ -6172,47 +6147,24 @@ function detonateNuke(p){
     o.material.opacity = 0.95 * (1 - k * k);
   });
   // --- 衝撃波ドーム ---
-  const dome = new THREE.Mesh(flashGeo, new THREE.MeshBasicMaterial({
-    color: 0xfff2d8, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending,
-    depthWrite: false, side: THREE.DoubleSide }));
+  const dome = new THREE.Mesh(flashGeo,
+    glowMat(0xfff2d8, 0.5, { blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
   dome.position.set(p.x, gy, p.z);
   addFx(dome, 1.4, (o, k) => { const s = 30 + Math.pow(k, 0.6) * 720; o.scale.set(s, s * 0.7, s); o.material.opacity = 0.5 * (1 - k); });
   // --- 地表の二重リング ---
-  const w1 = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
-    color: 0xffd9a8, transparent: true, opacity: 1, side: THREE.DoubleSide,
-    blending: THREE.AdditiveBlending, depthWrite: false }));
+  const w1 = new THREE.Mesh(ringGeo,
+    glowMat(0xffd9a8, 1, { side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
   w1.rotation.x = -Math.PI / 2; w1.position.set(p.x, gy + 3, p.z);
   addFx(w1, 2, (o, k) => { const s = 20 + Math.pow(k, 0.55) * 1500; o.scale.set(s, s, 1); o.material.opacity = 1 - k; });
-  const w2 = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
-    color: 0x8a7458, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false }));
+  const w2 = new THREE.Mesh(ringGeo, glowMat(0x8a7458, 0.6, { side: THREE.DoubleSide }));
   w2.rotation.x = -Math.PI / 2; w2.position.set(p.x, gy + 2, p.z);
   addFx(w2, 3.5, (o, k) => { const s = 30 + Math.pow(k, 0.6) * 1900; o.scale.set(s, s, 1); o.material.opacity = 0.6 * (1 - k); });
   // --- 上空の凝結リング(ウィルソン雲) ---
-  const cr = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
-    color: 0xf0f4f8, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
+  const cr = new THREE.Mesh(ringGeo, glowMat(0xf0f4f8, 0.55, { side: THREE.DoubleSide }));
   cr.rotation.x = -Math.PI / 2; cr.position.set(p.x, gy + 260, p.z);
   addFx(cr, 2.2, (o, k) => { const s = 80 + Math.pow(k, 0.7) * 850; o.scale.set(s, s, 1); o.material.opacity = 0.55 * (1 - k); });
   // --- 巨大な焦げ跡(放射状グラデーション・地形に沿う) ---
-  const sc = document.createElement('canvas'); sc.width = sc.height = 128;
-  const scx = sc.getContext('2d');
-  const grad = scx.createRadialGradient(64, 64, 6, 64, 64, 64);
-  grad.addColorStop(0, 'rgba(8,8,8,0.92)');
-  grad.addColorStop(0.55, 'rgba(14,12,10,0.75)');
-  grad.addColorStop(1, 'rgba(20,16,12,0)');
-  scx.fillStyle = grad; scx.fillRect(0, 0, 128, 128);
-  const sgeo = new THREE.PlaneGeometry(R * 2.6, R * 2.6, 24, 24);
-  sgeo.rotateX(-Math.PI / 2);
-  const sp2 = sgeo.getAttribute('position');
-  for(let i = 0; i < sp2.count; i++){
-    const wx = sp2.getX(i) + p.x, wz = sp2.getZ(i) + p.z;
-    // 水域にかかる頂点は水面下へ沈め、不透明な水面で隠す
-    sp2.setY(i, terrainH(wx, wz) - gy + (inWater(wx, wz) ? -3 : 0.7));
-  }
-  const scorch = new THREE.Mesh(sgeo, new THREE.MeshBasicMaterial({
-    map: new THREE.CanvasTexture(sc), transparent: true, depthWrite: false,
-    polygonOffset: true, polygonOffsetFactor: -2 }));
-  scorch.position.set(p.x, gy, p.z);
-  cityGroup.add(scorch);
+  addScorch(p, gy, R * 2.6, 24, 0.7, nukeScorchMat);
   // --- 土煙・スパーク・瓦礫 ---
   for(let i = 0; i < 150; i++){
     const a = Math.random() * Math.PI * 2;
@@ -6278,13 +6230,12 @@ function startCollapse(b, dirx, dirz, canTopple, delay = 0){
 function destroyAround(p, R, depth = 0, wave = 0){
   // 建物(空間ハッシュで近傍のみ走査)
   const R2 = R * 1.55;
-  const c0x = Math.floor((p.x - R2 + 2700) / GRID_CELL), c1x = Math.floor((p.x + R2 + 2700) / GRID_CELL);
-  const c0z = Math.floor((p.z - R2 + 2700) / GRID_CELL), c1z = Math.floor((p.z + R2 + 2700) / GRID_CELL);
+  const c0x = cellOf(p.x - R2), c1x = cellOf(p.x + R2);
+  const c0z = cellOf(p.z - R2), c1z = cellOf(p.z + R2);
   for(let cx = c0x; cx <= c1x; cx++) for(let cz = c0z; cz <= c1z; cz++){
-    const cell = grid.get(cx * 4096 + cz);
+    const cell = grid.get(cellKey(cx, cz));
     if(!cell) continue;
-    for(const idx of cell){
-      const b = buildings[idx];
+    for(const b of cell){
       if(b.state !== 0 && b.state !== 3) continue;       // 3=延焼中は直撃なら壊せる
       const d = Math.hypot(b.x - p.x, b.z - p.z);
       if(d <= R || (d <= R2 && Math.random() < 0.45)){
@@ -6309,9 +6260,7 @@ function destroyAround(p, R, depth = 0, wave = 0){
     const pz = pose.z - pose.dx * c.lane;
     if(Math.hypot(px - p.x, pz - p.z) <= CR){
       c.alive = false;
-      dummy.position.set(0, -50, 0); dummy.scale.set(0.001, 0.001, 0.001); dummy.rotation.set(0, 0, 0);
-      dummy.updateMatrix();
-      carMesh.setMatrixAt(c.i, dummy.matrix);
+      carMesh.setMatrixAt(c.i, HIDDEN_MAT);
       stats.cDead++;
       stats.damage += CAR_VALUE;
     }
@@ -6321,12 +6270,10 @@ function destroyAround(p, R, depth = 0, wave = 0){
   const treeHit = [false, false, false];
   for(const t of trees){
     if(!t.alive) continue;
+    if(Math.abs(t.x - p.x) > TR || Math.abs(t.z - p.z) > TR) continue;   // 矩形で早期棄却(木は数万本になる)
     if(Math.hypot(t.x - p.x, t.z - p.z) <= TR){
       t.alive = false;
-      dummy.position.set(0, -50, 0); dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(0.001, 0.001, 0.001);
-      dummy.updateMatrix();
-      treeMeshes[t.type].setMatrixAt(t.mi, dummy.matrix);
+      treeMeshes[t.type].setMatrixAt(t.mi, HIDDEN_MAT);
       treeHit[t.type] = true;
       stats.tDead++;
     }
@@ -6334,10 +6281,11 @@ function destroyAround(p, R, depth = 0, wave = 0){
   treeHit.forEach((h, ti) => { if(h) treeMeshes[ti].instanceMatrix.needsUpdate = true; });
 }
 
+const RUBBLE_COL = new THREE.Color(0x35312c);
+const FALLEN_COL = new THREE.Color(0x5c564e);
 function updateCollapses(dt){
   if(!collapsing.length) return;
-  const rubble = new THREE.Color(0x35312c);
-  const fallen = new THREE.Color(0x5c564e);
+  const touched = new Set();   // 行列を書き換えたメッシュだけGPUへ再アップロード
   for(let i = collapsing.length - 1; i >= 0; i--){
     const c = collapsing[i];
     const b = c.b;
@@ -6346,6 +6294,7 @@ function updateCollapses(dt){
       if(c.delay > 0) continue;
       collapseDust(b);
     }
+    touched.add(b.k);
     c.t += dt / c.dur;
     if(c.mode === 't'){
       // 倒壊: 基部を支点に加速しながら傾く
@@ -6353,7 +6302,7 @@ function updateCollapses(dt){
         toppleMatrix(b, c.amax, c.dirx, c.dirz);
         b.state = 2;
         const mesh = bMeshes[b.k];
-        mesh.setColorAt(b.mi, fallen);
+        mesh.setColorAt(b.mi, FALLEN_COL);
         mesh.instanceColor.needsUpdate = true;
         // 着地の粉塵が倒れた方向に走る
         for(let j = 0; j < 16; j++){
@@ -6383,7 +6332,7 @@ function updateCollapses(dt){
         b.state = 2;
         setBuildingMatrix(b, 0.045, 0, 0);
         const mesh = bMeshes[b.k];
-        mesh.setColorAt(b.mi, rubble);
+        mesh.setColorAt(b.mi, RUBBLE_COL);
         mesh.instanceColor.needsUpdate = true;
         collapsing.splice(i, 1);
         continue;
@@ -6393,7 +6342,7 @@ function updateCollapses(dt){
       setBuildingMatrix(b, Math.max(0.045, 1 - k * 0.96), c.ax * k + jitter, c.az * k + jitter);
     }
   }
-  for(const m of bMeshes) m.instanceMatrix.needsUpdate = true;
+  for(const k of touched) bMeshes[k].instanceMatrix.needsUpdate = true;
 }
 
 // 炎上中の建物: 燃えながら、時間が来たら崩れ落ちる
@@ -6544,29 +6493,34 @@ function playWhoosh(){
   gn.gain.exponentialRampToValueAtTime(0.0001, t + 1.25);
   src.connect(bp).connect(gn).connect(actx.destination); src.start(t);
 }
-document.getElementById('soundBtn').addEventListener('click', e => {
+$('soundBtn').addEventListener('click', e => {
   soundOn = !soundOn;
   e.target.textContent = soundOn ? 'SOUND: ON' : 'SOUND: OFF';
   initAudio();
 });
 
 // ---------- HUD ----------
-const $ = id => document.getElementById(id);
 function yen(v){
   if(v >= 1e12) return '¥' + (v / 1e12).toFixed(2) + '兆';
   if(v >= 1e8)  return '¥' + (v / 1e8).toFixed(1) + '億';
   if(v >= 1e4)  return '¥' + Math.round(v / 1e4).toLocaleString() + '万';
   return '¥' + Math.round(v).toLocaleString();
 }
-function updateHUD(force){
+const hudShown = {};   // 前回表示した文字列。変化した項目だけDOMを書き換える
+function setHud(id, text){
+  if(hudShown[id] === text) return;
+  hudShown[id] = text;
+  $(id).textContent = text;
+}
+function updateHUD(){
   stats.shown += (stats.damage - stats.shown) * 0.08;
   if(stats.damage - stats.shown < 1e5) stats.shown = stats.damage;
-  $('bDead').textContent = stats.bDead.toLocaleString();
-  $('bTotal').textContent = stats.bTotal.toLocaleString();
-  $('cDead').textContent = stats.cDead.toLocaleString();
-  $('tDead').textContent = stats.tDead.toLocaleString();
-  $('mCount').textContent = stats.mCount.toLocaleString();
-  $('dmgTotal').textContent = yen(stats.shown);
+  setHud('bDead', stats.bDead.toLocaleString());
+  setHud('bTotal', stats.bTotal.toLocaleString());
+  setHud('cDead', stats.cDead.toLocaleString());
+  setHud('tDead', stats.tDead.toLocaleString());
+  setHud('mCount', stats.mCount.toLocaleString());
+  setHud('dmgTotal', yen(stats.shown));
 }
 $('regen').addEventListener('click', () => generateCity($('seed').value || 'DEFAULT'));
 $('timeBtn').addEventListener('click', () => applyTime(timeMode === 'day' ? 'dusk' : 'day'));
@@ -6578,9 +6532,8 @@ const WEAPONS = [
 let weaponIdx = 0;
 $('weaponBtn').addEventListener('click', e => {
   weaponIdx = (weaponIdx + 1) % WEAPONS.length;
-  weapon = WEAPONS[weaponIdx][0];
   e.target.textContent = WEAPONS[weaponIdx][1];
-  const hot = weapon === 'nuke';
+  const hot = WEAPONS[weaponIdx][0] === 'nuke';
   e.target.style.color = hot ? 'var(--red)' : '';
   e.target.style.borderColor = hot ? 'var(--red)' : '';
 });
@@ -6600,7 +6553,7 @@ function resize(){
 addEventListener('resize', resize);
 resize();
 
-generateCity(document.getElementById('seed').value);
+generateCity($('seed').value);
 
 let last = performance.now();
 function loop(now){

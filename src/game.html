@@ -25,6 +25,8 @@ const VALUE_PER_M2_FLOOR = 300000; // 床面積1m2あたりの資産額
 // ---------- 地形(シード付き値ノイズ) ----------
 const TG_N = 33, TG_SPAN = 6400;
 let tGrid = null, tAmp = 0;
+let cityCore = { x: 0, z: 0 };   // 都心(ビル群)の位置。シードでずれる
+let cityHouseTh = 0.6;           // 住宅街になる都心距離のしきい値。小さいほど住宅街が多い
 function buildTerrain(rng){
   tGrid = new Float32Array(TG_N * TG_N);
   for(let i = 0; i < tGrid.length; i++) tGrid[i] = rng();
@@ -47,7 +49,7 @@ function terrainH(x, z){
   const c1 = tSample(u * 0.28 + 2.3, v * 0.28 + 4.1);   // 大きなうねり
   const c2 = tSample(u, v);                              // 細かい起伏
   const h = (c1 - 0.5) * 1.6 + (c2 - 0.5) * 0.5;
-  const distC = Math.hypot(x, z) / CITY_HALF;
+  const distC = Math.hypot(x - cityCore.x, z - cityCore.z) / CITY_HALF;
   const flat = 0.25 + 0.75 * Math.min(1, Math.max(0, (distC - 0.15) / 0.75)); // 都心部は平坦
   return h * tAmp * flat;
 }
@@ -580,9 +582,9 @@ function genGridPlan(rng, organic){
       const v0 = linesV[j].c + linesV[j].w / 2, v1 = linesV[j + 1].c - linesV[j + 1].w / 2;
       if(u1 - u0 < 24 || v1 - v0 < 24) continue;
       const wc = warp((u0 + u1) / 2, (v0 + v1) / 2);
-      const distC = Math.hypot(wc.x, wc.z) / CITY_HALF;
+      const distC = Math.hypot(wc.x - cityCore.x, wc.z - cityCore.z) / CITY_HALF;
       const park = rng() < 0.03;
-      const house = !park && distC > 0.6 + (rng() - 0.5) * 0.14;
+      const house = !park && distC > cityHouseTh + (rng() - 0.5) * 0.14;
       // 塗り用ポリゴン(縁を分割してからワープすると曲線に沿う)
       const poly = [], step = 45;
       for(let u = u0; u < u1; u += step) poly.push(warp(u, v0));
@@ -626,10 +628,13 @@ function genGridPlan(rng, organic){
 
 // ---------- 都市プラン: 放射環状(環状道路 + 放射道路) ----------
 function genRadialPlan(rng){
-  const cx = (rng() - 0.5) * 300, cz = (rng() - 0.5) * 300;   // 中心を少しずらす
+  // 中心は都心位置に追従(街が地図からはみ出さない範囲で)
+  const cx = Math.max(-450, Math.min(450, cityCore.x));
+  const cz = Math.max(-450, Math.min(450, cityCore.z));
+  const rEdge = CITY_HALF - Math.hypot(cx, cz);
   const rings = [];
   let r = 150 + rng() * 80;
-  while(r < CITY_HALF - 60){
+  while(r < rEdge - 60){
     rings.push({ r, w: rng() < 0.3 ? 30 : 18, major: rng() < 0.35 || rings.length === 0 });
     r += 150 + rng() * 170;
   }
@@ -654,7 +659,7 @@ function genRadialPlan(rng){
   for(const sp of spokes){
     const raw = [
       { x: cx + Math.cos(sp.a) * rMin * 0.55, z: cz + Math.sin(sp.a) * rMin * 0.55 },
-      { x: cx + Math.cos(sp.a) * CITY_HALF, z: cz + Math.sin(sp.a) * CITY_HALF }];
+      { x: cx + Math.cos(sp.a) * rEdge, z: cz + Math.sin(sp.a) * rEdge }];
     roadPaths.push({ pts: resamplePath(raw, false), w: sp.w, major: sp.major, loop: false });
   }
   // 中央広場は公園
@@ -674,7 +679,7 @@ function genRadialPlan(rng){
   for(let ri = 0; ri < rings.length; ri++){
     const rIn = rings[ri].r + rings[ri].w / 2 + 5;
     const rOut = (ri === rings.length - 1
-      ? Math.min(CITY_HALF, rings[ri].r + 260)
+      ? Math.min(rEdge, rings[ri].r + 260)
       : rings[ri + 1].r - rings[ri + 1].w / 2 - 5);
     if(rOut - rIn < 26) continue;
     const rm = (rIn + rOut) / 2;
@@ -686,7 +691,7 @@ function genRadialPlan(rng){
       if(aB - aA < 24 / rm) continue;
       const distC = rm / CITY_HALF;
       const park = rng() < 0.025;
-      const house = !park && distC > 0.6 + (rng() - 0.5) * 0.14;
+      const house = !park && distC > cityHouseTh + (rng() - 0.5) * 0.14;
       const poly = [];
       const nA = Math.max(4, Math.round((aB - aA) * rOut / 40));
       for(let k = 0; k <= nA; k++){ const a = aA + (aB - aA) * k / nA; poly.push({ x: cx + Math.cos(a) * rOut, z: cz + Math.sin(a) * rOut }); }
@@ -757,6 +762,10 @@ function generateCity(seedStr){
   stats.bDead = 0; stats.cDead = 0; stats.mCount = 0; stats.damage = 0; stats.shown = 0;
 
   const rng = mulberry32(xfnv1a(seedStr));
+  // 都心の位置と住宅街の比率もシードで揺らす
+  const coreA = rng() * Math.PI * 2, coreR = rng() * 900;
+  cityCore = { x: Math.cos(coreA) * coreR, z: Math.sin(coreA) * coreR };
+  cityHouseTh = 0.5 + rng() * 0.2;   // 0.5(住宅多め) 〜 0.7(ビル多め)
   buildTerrain(rng);               // 起伏もシードで決まる
 
   // --- 都市プランをシードで選ぶ ---

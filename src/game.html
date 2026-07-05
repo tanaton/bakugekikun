@@ -1043,15 +1043,15 @@ function generateCity(seedStr){
       }
     }
   }
-  // 山は森に覆われる
+  // 山は公園以上の密度の森に覆われる(試行は円全体、地図外はスキップ)
   for(const f of cornerFeats){
     if(f.type !== 'm') continue;
-    const n = Math.round(f.r * f.r / 2400);
+    const n = Math.min(24000, Math.round(Math.PI * f.r * f.r / 170));
     for(let k = 0; k < n; k++){
-      const a = rng() * Math.PI * 2, rr = Math.sqrt(rng()) * f.r * 0.92;
+      const a = rng() * Math.PI * 2, rr = Math.sqrt(rng()) * f.r * 0.95;
       const tx = f.x + Math.cos(a) * rr, tz = f.z + Math.sin(a) * rr;
       if(Math.abs(tx) > 2560 || Math.abs(tz) > 2560 || onRoad(tx, tz)) continue;
-      pushTree(tx, tz, 5 + rng() * 6, Math.floor(rng() * 3), rng);
+      pushTree(tx, tz, 6 + rng() * 7, Math.floor(rng() * 3), rng);
     }
   }
   const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4f3a });
@@ -1125,8 +1125,10 @@ function drawGround(){
   for(const f of cornerFeats){
     const px = w2c(f.x), pz = w2c(f.z);
     if(f.type === 'm'){
+      // 道路を削った跡が透けないよう、8割の半径までは完全不透明で塗る
       const grd = g.createRadialGradient(px, pz, f.r * 0.1 * s, px, pz, f.r * s);
       grd.addColorStop(0, G.mtn1);
+      grd.addColorStop(0.78, G.mtn1);
       grd.addColorStop(1, G.mtn2);
       g.fillStyle = grd;
       g.beginPath(); g.arc(px, pz, f.r * s, 0, Math.PI * 2); g.fill();

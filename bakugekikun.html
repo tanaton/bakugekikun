@@ -93,6 +93,7 @@
     <div class="label">Damage Report — 被害報告</div>
     <div class="row"><span class="label">破壊建物</span><span class="num"><span id="bDead">0</span> / <span id="bTotal">0</span><small>棟</small></span></div>
     <div class="row"><span class="label">破壊車両</span><span class="num"><span id="cDead">0</span><small>台</small></span></div>
+    <div class="row"><span class="label">破壊樹木</span><span class="num"><span id="tDead">0</span><small>本</small></span></div>
     <div class="row"><span class="label">出撃ミサイル</span><span class="num"><span id="mCount">0</span><small>発</small></span></div>
     <div class="divider"></div>
     <div class="row"><span class="label">被害総額</span><span class="num" id="dmgTotal">¥0</span></div>
@@ -1070,7 +1071,7 @@ function generateCity(seedStr){
   clearDebris();
   for(const L of boomLights) L.intensity = 0;
   fireP.clear(); smokeP.clear();
-  stats.bDead = 0; stats.cDead = 0; stats.mCount = 0; stats.damage = 0; stats.shown = 0;
+  stats.bDead = 0; stats.cDead = 0; stats.tDead = 0; stats.mCount = 0; stats.damage = 0; stats.shown = 0;
 
   const rng = mulberry32(xfnv1a(seedStr));
   // 都心の位置と住宅街の比率もシードで揺らす
@@ -1633,7 +1634,7 @@ function updateBurning(){
 const missiles = [];
 const fx = [];   // {mesh, life, age, update}
 const collapsing = [];
-const stats = { bDead: 0, bTotal: 0, cDead: 0, mCount: 0, damage: 0, shown: 0 };
+const stats = { bDead: 0, bTotal: 0, cDead: 0, tDead: 0, mCount: 0, damage: 0, shown: 0 };
 
 const missileGeo = new THREE.ConeGeometry(2.2, 16, 8);
 missileGeo.rotateX(Math.PI / 2); // +Z向き
@@ -2115,6 +2116,7 @@ function destroyAround(p, R, depth = 0, wave = 0){
       dummy.updateMatrix();
       treeMeshes[t.type].setMatrixAt(t.mi, dummy.matrix);
       treeHit[t.type] = true;
+      stats.tDead++;
     }
   }
   treeHit.forEach((h, ti) => { if(h) treeMeshes[ti].instanceMatrix.needsUpdate = true; });
@@ -2350,6 +2352,7 @@ function updateHUD(force){
   $('bDead').textContent = stats.bDead.toLocaleString();
   $('bTotal').textContent = stats.bTotal.toLocaleString();
   $('cDead').textContent = stats.cDead.toLocaleString();
+  $('tDead').textContent = stats.tDead.toLocaleString();
   $('mCount').textContent = stats.mCount.toLocaleString();
   $('dmgTotal').textContent = yen(stats.shown);
 }

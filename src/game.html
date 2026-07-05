@@ -201,9 +201,11 @@ function groundLevel(x, z, sx, sz){
 
 // ---------- レンダラ / シーン ----------
 const canvas = document.getElementById('gl');
+// r147当時の配色を維持するためカラーマネジメントは無効(hex値をそのまま使う旧パイプライン)
+THREE.ColorManagement.enabled = false;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
-renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x8ec4f0);
@@ -212,9 +214,11 @@ scene.fog = new THREE.Fog(0x8ec4f0, 1600, 9000);
 const camera = new THREE.PerspectiveCamera(55, 1, 2, 14000);
 
 // 環境光(時間帯で切り替え)
-const hemi = new THREE.HemisphereLight(0xbdd5ee, 0x8a8578, 1.05);
+// r155以降ライト強度が物理単位になった(旧実装の内部π倍が廃止)ため、π倍して旧来の明るさを保つ
+const LIGHT_SCALE = Math.PI;
+const hemi = new THREE.HemisphereLight(0xbdd5ee, 0x8a8578, 1.05 * LIGHT_SCALE);
 scene.add(hemi);
-const sun = new THREE.DirectionalLight(0xfff1d6, 1.35);
+const sun = new THREE.DirectionalLight(0xfff1d6, 1.35 * LIGHT_SCALE);
 sun.position.set(-900, 2000, 700);
 scene.add(sun);
 
@@ -245,8 +249,8 @@ function applyTime(mode){
   const T = TIMES[mode];
   scene.fog.color.setHex(T.fog); scene.fog.near = T.fogNear; scene.fog.far = T.fogFar;
   scene.background.setHex(T.fog);
-  hemi.color.setHex(T.hemiSky); hemi.groundColor.setHex(T.hemiGnd); hemi.intensity = T.hemiInt;
-  sun.color.setHex(T.sunCol); sun.intensity = T.sunInt; sun.position.set(...T.sunPos);
+  hemi.color.setHex(T.hemiSky); hemi.groundColor.setHex(T.hemiGnd); hemi.intensity = T.hemiInt * LIGHT_SCALE;
+  sun.color.setHex(T.sunCol); sun.intensity = T.sunInt * LIGHT_SCALE; sun.position.set(...T.sunPos);
   for(const m of emissiveMats) m.emissiveIntensity = T.emissive * (m.userData.eScale || 1);
   if(gCtx && groundPolys.length) drawGround();
   if(waterMat){
@@ -1487,9 +1491,10 @@ const delayedBooms = [];      // 二次爆発の予約 {t,x,z}
 const burnSites = [];         // 延焼地点 {x,z,until,next}
 
 // 爆発光(プールから使い回す)
+// decay=0: 逆二乗減衰を打ち消し、distanceまでのスムーズな減衰だけ残す(旧legacy lightsの見た目に近い)
 const boomLights = [];
 for(let i = 0; i < 6; i++){
-  const L = new THREE.PointLight(0xffa050, 0, 1000, 2);
+  const L = new THREE.PointLight(0xffa050, 0, 1000, 0);
   L.position.y = 60;
   scene.add(L);
   boomLights.push(L);
@@ -1497,8 +1502,8 @@ for(let i = 0; i < 6; i++){
 function flashLight(x, z, peak, gy = 0){
   const L = boomLights.find(l => l.intensity <= 0.05) || boomLights[0];
   L.position.set(x, gy + 60, z);
-  L.userData = { peak, age: 0 };
-  L.intensity = peak;
+  L.userData = { peak: peak * LIGHT_SCALE, age: 0 };
+  L.intensity = peak * LIGHT_SCALE;
 }
 function updateBoomLights(dt){
   for(const L of boomLights){
@@ -1921,9 +1926,9 @@ function detonateNuke(p){
   nf.style.transition = 'opacity 2.4s ease-out';
   nf.style.opacity = '0';
   // --- 巨大な光源(街全体が照らされる) ---
-  const NL = new THREE.PointLight(0xffe2b0, 18, 3400, 2);
+  const NL = new THREE.PointLight(0xffe2b0, 18 * LIGHT_SCALE, 3400, 0);
   NL.position.set(p.x, gy + 220, p.z);
-  addFx(NL, 4, (o, k) => { o.intensity = 18 * (1 - k) * (1 - k); });
+  addFx(NL, 4, (o, k) => { o.intensity = 18 * LIGHT_SCALE * (1 - k) * (1 - k); });
   flashLight(p.x, p.z, 10, gy);
   // --- 白熱コア ---
   const core = new THREE.Mesh(flashGeo, new THREE.MeshBasicMaterial({

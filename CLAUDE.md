@@ -16,7 +16,7 @@ PowerShellなら `./build.ps1`。
 
 - `src/hud.html` — CSS + HUDのDOM。`<script>` 開始タグで終わる
 - `src/game.html` — ゲーム本体のJS。`</script>` で始まる(hud側のタグを閉じる)
-- `vendor/three.min.js` — Three.js r147 UMD。編集しない
+- `vendor/three.min.js` — Three.js r185。npm `three@0.185.0` を esbuild でIIFE化したもの(`npx esbuild entry.js --bundle --minify --format=iife --global-name=THREE`、entry.js は `export * from 'three';`)。編集しない
 - `bakugekikun.html` — ビルド生成物。直接編集しない
 
 ## 約束事

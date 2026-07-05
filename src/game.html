@@ -756,6 +756,7 @@ function genGridPlan(rng, organic){
       const distC = Math.hypot(wc.x - cityCore.x, wc.z - cityCore.z) / CITY_HALF;
       const park = rng() < 0.03;
       const house = !park && distC > cityHouseTh + (rng() - 0.5) * 0.14;
+      const w = u1 - u0 - 10, d = v1 - v0 - 10;
       // 塗り用ポリゴン(縁を分割してからワープすると曲線に沿う)
       const poly = [], step = 45;
       for(let u = u0; u < u1; u += step) poly.push(warp(u, v0));
@@ -769,7 +770,6 @@ function genGridPlan(rng, organic){
         continue;
       }
       // ロット分割
-      const w = u1 - u0 - 10, d = v1 - v0 - 10;
       const nx = Math.max(1, house ? Math.floor(w / (15 + rng() * 6)) : Math.min(4, Math.floor(w / (26 + rng() * 26))));
       const nz = Math.max(1, house ? Math.floor(d / (15 + rng() * 6)) : Math.min(4, Math.floor(d / (26 + rng() * 26))));
       const cw = w / nx, cd = d / nz;
@@ -882,28 +882,48 @@ function genRadialPlan(rng){
         for(let k = 0; k <= nA; k++){ const a = aA + (aB - aA) * k / nA; poly.push({ x: cx + Math.cos(a) * rO(a), z: cz + Math.sin(a) * rO(a) }); }
         for(let k = nA; k >= 0; k--){ const a = aA + (aB - aA) * k / nA; poly.push({ x: cx + Math.cos(a) * rIn, z: cz + Math.sin(a) * rIn }); }
         groundPolys.push({ pts: poly, kind: houseO ? 'house' : 'block', v: rng() < 0.5 });
-        const lotW = houseO ? 16 + rng() * 5 : 30 + rng() * 20;
-        const nt = Math.max(1, Math.floor((aB - aA) * rmO / lotW));
-        for(let it = 0; it < nt; it++){
-          const ac = aA + (aB - aA) * ((it + 0.5) / nt);
-          if(it > 0){                                    // 列境界の路地
-            const ab = aA + (aB - aA) * it / nt;
-            alleyPaths.push({ pts: [
-              { x: cx + Math.cos(ab) * (rIn + 3), z: cz + Math.sin(ab) * (rIn + 3) },
-              { x: cx + Math.cos(ab) * (rO(ab) - 3), z: cz + Math.sin(ab) * (rO(ab) - 3) }], w: 5 });
+        // 半径方向に帯を刻み、帯ごとに角度列を切り直す(外周ほど区画が広がりすぎないように)
+        let r0 = rIn;
+        while(rOutMid - r0 >= 26){
+          const r1 = Math.min(rOutMid, r0 + (houseO ? 110 + rng() * 70 : 150 + rng() * 100));
+          const last = rOutMid - r1 < 26;               // 端数は最後の帯に吸収
+          const rB = last ? rOutMid : r1;
+          if(r0 > rIn){                                  // 帯境界の弧の路地(地図の縁は超えない)
+            const raw = [], nA2 = Math.max(4, Math.round((aB - aA) * r0 / 30));
+            for(let k = 0; k <= nA2; k++){
+              const a = aA + (aB - aA) * k / nA2;
+              const rr = Math.min(r0, rO(a) - 3);
+              raw.push({ x: cx + Math.cos(a) * rr, z: cz + Math.sin(a) * rr });
+            }
+            alleyPaths.push({ pts: raw, w: 5 });
           }
-          const depth = rO(ac) - rIn - 6;
-          if(depth < 16) continue;
-          const lotD = houseO ? 16 + rng() * 5 : 30 + rng() * 20;
-          const nrL = Math.max(1, Math.floor(depth / lotD));
-          const cdl = depth / nrL;
-          for(let jr = 0; jr < nrL; jr++){
-            const rc = rIn + 3 + cdl * jr + cdl / 2;
-            pendingLots.push({ x: cx + Math.cos(ac) * rc, z: cz + Math.sin(ac) * rc,
-              rot: Math.atan2(-Math.cos(ac), -Math.sin(ac)),
-              availW: (aB - aA) * rc / nt, availD: cdl,
-              distC: rc / CITY_HALF, house: houseO });
+          const lotW = houseO ? 16 + rng() * 5 : 30 + rng() * 20;
+          const nt = Math.max(1, Math.floor((aB - aA) * ((r0 + rB) / 2) / lotW));
+          for(let it = 0; it < nt; it++){
+            const ac = aA + (aB - aA) * ((it + 0.5) / nt);
+            if(it > 0){                                  // 列境界の路地
+              const ab = aA + (aB - aA) * it / nt;
+              const rt = Math.min(rB, rO(ab)) - 3;
+              if(rt - r0 > 8) alleyPaths.push({ pts: [
+                { x: cx + Math.cos(ab) * (r0 + 3), z: cz + Math.sin(ab) * (r0 + 3) },
+                { x: cx + Math.cos(ab) * rt, z: cz + Math.sin(ab) * rt }], w: 5 });
+            }
+            const rTop = last ? rO(ac) - 6 : Math.min(rB - 3, rO(ac) - 6);
+            const depth = rTop - r0 - 3;
+            if(depth < 16) continue;
+            const lotD = houseO ? 16 + rng() * 5 : 30 + rng() * 20;
+            const nrL = Math.max(1, Math.floor(depth / lotD));
+            const cdl = depth / nrL;
+            for(let jr = 0; jr < nrL; jr++){
+              const rc = r0 + 3 + cdl * jr + cdl / 2;
+              pendingLots.push({ x: cx + Math.cos(ac) * rc, z: cz + Math.sin(ac) * rc,
+                rot: Math.atan2(-Math.cos(ac), -Math.sin(ac)),
+                availW: (aB - aA) * rc / nt, availD: cdl,
+                distC: rc / CITY_HALF, house: houseO });
+            }
           }
+          if(last) break;
+          r0 = r1;
         }
         continue;
       }
@@ -912,6 +932,7 @@ function genRadialPlan(rng){
       const distC = rm / CITY_HALF;
       const park = rng() < 0.025;
       const house = !park && distC > cityHouseTh + (rng() - 0.5) * 0.14;
+      const depth = rOut - rIn - 8;
       const poly = [];
       const nA = Math.max(4, Math.round((aB - aA) * rOut / 40));
       for(let k = 0; k <= nA; k++){ const a = aA + (aB - aA) * k / nA; poly.push({ x: cx + Math.cos(a) * rOut, z: cz + Math.sin(a) * rOut }); }
@@ -924,7 +945,6 @@ function genRadialPlan(rng){
         continue;
       }
       // ロット分割(半径方向 × 角度方向)
-      const depth = rOut - rIn - 8;
       const nr = Math.max(1, house ? Math.floor(depth / (15 + rng() * 6)) : Math.min(3, Math.floor(depth / (28 + rng() * 22))));
       const cd = depth / nr;
       // 街区内の路地(同心円の弧 + 放射方向)
@@ -985,7 +1005,7 @@ function generateCity(seedStr){
   // 都心の位置と住宅街の比率もシードで揺らす
   const coreA = rng() * Math.PI * 2, coreR = rng() * 900;
   cityCore = { x: Math.cos(coreA) * coreR, z: Math.sin(coreA) * coreR };
-  cityHouseTh = 0.5 + rng() * 0.2;   // 0.5(住宅多め) 〜 0.7(ビル多め)
+  cityHouseTh = 0.53 + rng() * 0.2;   // 0.53(住宅多め) 〜 0.73(ビル多め)
   // 四隅は山か湾、四辺は1辺全体の山脈か水辺に(それ以外は平地)
   cornerFeats = [];
   const corners = [[-1, -1], [1, -1], [-1, 1], [1, 1]];

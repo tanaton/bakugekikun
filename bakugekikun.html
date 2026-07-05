@@ -775,11 +775,21 @@ function genRadialPlan(rng){
     }
     roadPaths.push({ pts: resamplePath(raw, true), w: g.w, major: g.major, loop: true });
   }
+  // 中心から角度aの方向に、地図の四角い縁までの距離
+  const edgeDist = (a) => {
+    const ca = Math.cos(a), sa = Math.sin(a);
+    let d = Infinity;
+    if(ca > 1e-6) d = Math.min(d, (2480 - cx) / ca);
+    if(ca < -1e-6) d = Math.min(d, (-2480 - cx) / ca);
+    if(sa > 1e-6) d = Math.min(d, (2480 - cz) / sa);
+    if(sa < -1e-6) d = Math.min(d, (-2480 - cz) / sa);
+    return d;
+  };
   const rMin = rings[0].r;
   for(const sp of spokes){
     const raw = [
       { x: cx + Math.cos(sp.a) * rMin * 0.55, z: cz + Math.sin(sp.a) * rMin * 0.55 },
-      { x: cx + Math.cos(sp.a) * rEdge, z: cz + Math.sin(sp.a) * rEdge }];
+      { x: cx + Math.cos(sp.a) * (edgeDist(sp.a) - 20), z: cz + Math.sin(sp.a) * (edgeDist(sp.a) - 20) }];
     roadPaths.push({ pts: resamplePath(raw, false), w: sp.w, major: sp.major, loop: false });
   }
   // 中央広場は公園
@@ -795,20 +805,59 @@ function genRadialPlan(rng){
       const a = rng() * Math.PI * 2, rr = Math.sqrt(rng()) * (rMin - 25);
       return { x: cx + Math.cos(a) * rr, z: cz + Math.sin(a) * rr };
     }});
-  // 街区: リング帯 × スポーク区間の扇形
+  // 街区: リング帯 × スポーク区間の扇形。最外帯は地図の縁まで埋める
   for(let ri = 0; ri < rings.length; ri++){
+    const outer = ri === rings.length - 1;
     const rIn = rings[ri].r + rings[ri].w / 2 + 5;
-    const rOut = (ri === rings.length - 1
-      ? Math.min(rEdge, rings[ri].r + 260)
-      : rings[ri + 1].r - rings[ri + 1].w / 2 - 5);
-    if(rOut - rIn < 26) continue;
-    const rm = (rIn + rOut) / 2;
+    const rOutBand = outer ? 0 : rings[ri + 1].r - rings[ri + 1].w / 2 - 5;
+    if(!outer && rOutBand - rIn < 26) continue;
+    const rm = outer ? rIn + 150 : (rIn + rOutBand) / 2;
     for(let si = 0; si < spokes.length; si++){
       const s0 = spokes[si], s1 = spokes[(si + 1) % spokes.length];
       const gap = (si === spokes.length - 1 ? s1.a + Math.PI * 2 : s1.a) - s0.a;
       const aA = s0.a + (s0.w / 2 + 5) / rm;
       const aB = s0.a + gap - (s1.w / 2 + 5) / rm;
       if(aB - aA < 24 / rm) continue;
+
+      if(outer){
+        // --- 最外帯: 角度列ごとに地図の縁までロットを敷き詰める ---
+        const rO = (a) => edgeDist(a) - 14;
+        const rOutMid = rO((aA + aB) / 2);
+        if(rOutMid - rIn < 26) continue;
+        const rmO = (rIn + rOutMid) / 2;
+        const houseO = rmO / CITY_HALF > cityHouseTh + (rng() - 0.5) * 0.14;
+        const poly = [];
+        const nA = Math.max(4, Math.round((aB - aA) * rOutMid / 40));
+        for(let k = 0; k <= nA; k++){ const a = aA + (aB - aA) * k / nA; poly.push({ x: cx + Math.cos(a) * rO(a), z: cz + Math.sin(a) * rO(a) }); }
+        for(let k = nA; k >= 0; k--){ const a = aA + (aB - aA) * k / nA; poly.push({ x: cx + Math.cos(a) * rIn, z: cz + Math.sin(a) * rIn }); }
+        groundPolys.push({ pts: poly, kind: houseO ? 'house' : 'block', v: rng() < 0.5 });
+        const lotW = houseO ? 16 + rng() * 5 : 30 + rng() * 20;
+        const nt = Math.max(1, Math.floor((aB - aA) * rmO / lotW));
+        for(let it = 0; it < nt; it++){
+          const ac = aA + (aB - aA) * ((it + 0.5) / nt);
+          if(it > 0){                                    // 列境界の路地
+            const ab = aA + (aB - aA) * it / nt;
+            alleyPaths.push({ pts: [
+              { x: cx + Math.cos(ab) * (rIn + 3), z: cz + Math.sin(ab) * (rIn + 3) },
+              { x: cx + Math.cos(ab) * (rO(ab) - 3), z: cz + Math.sin(ab) * (rO(ab) - 3) }], w: 5 });
+          }
+          const depth = rO(ac) - rIn - 6;
+          if(depth < 16) continue;
+          const lotD = houseO ? 16 + rng() * 5 : 30 + rng() * 20;
+          const nrL = Math.max(1, Math.floor(depth / lotD));
+          const cdl = depth / nrL;
+          for(let jr = 0; jr < nrL; jr++){
+            const rc = rIn + 3 + cdl * jr + cdl / 2;
+            pendingLots.push({ x: cx + Math.cos(ac) * rc, z: cz + Math.sin(ac) * rc,
+              rot: Math.atan2(-Math.cos(ac), -Math.sin(ac)),
+              availW: (aB - aA) * rc / nt, availD: cdl,
+              distC: rc / CITY_HALF, house: houseO });
+          }
+        }
+        continue;
+      }
+
+      const rOut = rOutBand;
       const distC = rm / CITY_HALF;
       const park = rng() < 0.025;
       const house = !park && distC > cityHouseTh + (rng() - 0.5) * 0.14;

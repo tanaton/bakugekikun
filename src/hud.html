@@ -35,6 +35,12 @@
   }
   button:hover{ background:rgba(255,176,82,.12); }
   button:focus-visible{ outline:1px solid var(--amber); outline-offset:1px; }
+  /* ---- profiler (Pキーで表示) ---- */
+  #prof{
+    display:none; margin-top:6px; padding-top:6px; border-top:1px solid var(--line-dim);
+    font-size:10px; line-height:1.55; color:var(--dim); white-space:pre;
+    font-variant-numeric:tabular-nums;
+  }
   /* ---- damage report (top right) ---- */
   #report{ top:14px; right:14px; min-width:250px; border-top:2px solid var(--red); }
   #report .row{ display:flex; justify-content:space-between; align-items:baseline; gap:16px; margin-top:7px; }
@@ -88,6 +94,7 @@
     <div class="seedrow"><button id="weaponBtn" style="flex:1" title="右クリックで発射する弾種を切り替え">弾種: 単弾頭ミサイル</button></div>
     <div class="label" id="planName" style="margin-top:8px">都市プラン: —</div>
     <div class="label" id="perf" style="margin-top:4px">— fps</div>
+    <div id="prof"></div>
   </div>
 
   <div class="panel" id="report">
@@ -106,6 +113,7 @@
     <div><span class="key">左ドラッグ</span><b>視点回転</b></div>
     <div><span class="key">ホイール</span><b>ズーム</b></div>
     <div><span class="key">右クリック</span><b style="color:var(--red)">爆撃指定</b></div>
+    <div><span class="key">P</span><b>処理時間計測</b></div>
   </div>
 
   <div class="panel" id="soundWrap"><button id="soundBtn">SOUND: ON</button></div>

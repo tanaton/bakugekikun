@@ -527,11 +527,12 @@ function makeTowerGeometry(){
     }
   };
   const box = new THREE.BoxGeometry(1, 1, 1).toNonIndexed();
-  // BoxGeometryの面順: +x,-x,+y,-y,+z,-z (各6頂点)。底面は見えないので省く
+  // BoxGeometryの面順: +x,-x,+y,-y,+z,-z (各6頂点)
   push(box, 0, 12);            // 側面 +x, -x
   push(box, 24, 36);           // 側面 +z, -z
   const sideCount = out.pos.length / 3;
   push(box, 12, 18);           // 屋上面
+  push(box, 18, 24);           // 底面(直立時はカリングで消えるが、倒壊時に見える)
   const pent = new THREE.BoxGeometry(0.42, 0.07, 0.36).translate(0.12, 0.53, 0.08).toNonIndexed();
   push(pent, 0, 36);           // ペントハウス(機械室)
   const unit = new THREE.BoxGeometry(0.2, 0.09, 0.18).translate(-0.22, 0.54, -0.2).toNonIndexed();
@@ -1022,7 +1023,9 @@ function generateCity(seedStr){
   roadPaths = []; groundPolys = []; alleyPaths = []; lotDecals = [];
   pendingLots = []; parkTreeJobs = [];
   for(const m of missiles) removeMissile(m);
-  for(const f of fx) releaseFx(f);   // materialを持たないPointLightにも安全
+  for(const f of fx) releaseFx(f);
+  for(const L of boomLights) L.intensity = 0;
+  for(const L of nukeLights) L.intensity = 0;
   missiles.length = 0; fx.length = 0; collapsing.length = 0;
   delayedBooms.length = 0; burnSites.length = 0; burningBldgs.length = 0;
   nukeEmitters.length = 0;
@@ -1596,11 +1599,32 @@ function flashLight(x, z, peak, gy = 0){
   L.userData = { peak: peak * LIGHT_SCALE, age: 0 };
   L.intensity = peak * LIGHT_SCALE;
 }
+// 核爆発の巨大光源(こちらも常設プール)。
+// 注意: ライトをシーンにadd/removeするとライト数が変わり、Three.jsが全マテリアルの
+// シェーダーを作り直して100ms級のスパイクになる。ライトは常設してintensityだけ動かすこと
+const nukeLights = [];
+for(let i = 0; i < 2; i++){
+  const L = new THREE.PointLight(0xffe2b0, 0, 3400, 0);
+  scene.add(L);
+  nukeLights.push(L);
+}
+function nukeFlashLight(x, y, z, peak){
+  const L = nukeLights.find(l => l.intensity <= 0) || nukeLights[0];
+  L.position.set(x, y, z);
+  L.userData = { peak: peak * LIGHT_SCALE, age: 0 };
+  L.intensity = peak * LIGHT_SCALE;
+}
 function updateBoomLights(dt){
   for(const L of boomLights){
     if(L.intensity <= 0) continue;
     L.userData.age += dt;
     L.intensity = Math.max(0, L.userData.peak * (1 - L.userData.age / 0.9));
+  }
+  for(const L of nukeLights){                       // 4秒かけて二乗カーブで減光
+    if(L.intensity <= 0) continue;
+    L.userData.age += dt;
+    const k = Math.min(1, L.userData.age / 4);
+    L.intensity = k >= 1 ? 0 : L.userData.peak * (1 - k) * (1 - k);
   }
 }
 
@@ -1736,7 +1760,7 @@ function releaseFx(f){
   scene.remove(f.mesh);
   const key = f.mesh.userData && f.mesh.userData.fxKey;
   if(key) fxFree.get(key).push(f.mesh);
-  else if(f.mesh.material) f.mesh.material.dispose();   // プール外(PointLightはmaterialなし)
+  else if(f.mesh.material) f.mesh.material.dispose();   // プール外の一時メッシュ
 }
 // 焦げ跡: 放射状グラデーションのデカール用マテリアル(全爆発で共用・生成は起動時1回)
 function makeScorchMaterial(innerR, stops){
@@ -2108,9 +2132,7 @@ function detonateNuke(p){
   nf.style.transition = 'opacity 2.4s ease-out';
   nf.style.opacity = '0';
   // --- 巨大な光源(街全体が照らされる) ---
-  const NL = new THREE.PointLight(0xffe2b0, 18 * LIGHT_SCALE, 3400, 0);
-  NL.position.set(p.x, gy + 220, p.z);
-  addFx(NL, 4, (o, k) => { o.intensity = 18 * LIGHT_SCALE * (1 - k) * (1 - k); });
+  nukeFlashLight(p.x, gy + 220, p.z, 18);
   flashLight(p.x, p.z, 10, gy);
   // --- 白熱コア ---
   growFx(fxSphereAdd(0xfffbee, 1), p.x, gy + 40, p.z, 1.2, 20, 190, 0.4, 1);
@@ -2504,6 +2526,38 @@ $('rand').addEventListener('click', () => {
 });
 $('seed').addEventListener('keydown', e => { if(e.key === 'Enter') generateCity(e.target.value || 'DEFAULT'); });
 
+// ---------- 処理時間プロファイラ (Pキーで表示切替) ----------
+// pt(name)をループ内の各処理の直後に置き、直前のチェックポイントからの経過を区間名に積算する。
+// 表示OFF中は即returnするので計測オーバーヘッドはほぼゼロ。
+let profOn = false;
+const profSum = new Map();
+let profMark = 0;
+function ptBegin(){ if(profOn) profMark = performance.now(); }
+function pt(name){
+  if(!profOn) return;
+  const t = performance.now();
+  profSum.set(name, (profSum.get(name) || 0) + (t - profMark));
+  profMark = t;
+}
+function profShow(frames){
+  const rows = [...profSum].sort((a, b) => b[1] - a[1]);
+  let js = 0;
+  for(const r of rows) js += r[1];
+  const lines = rows.map(([k, v]) => k.padEnd(10) + (v / frames).toFixed(2).padStart(6) + 'ms');
+  lines.push('-'.repeat(18));
+  lines.push('js total'.padEnd(10) + (js / frames).toFixed(2).padStart(6) + 'ms');
+  const info = renderer.info.render;
+  lines.push(`draw:${info.calls}  tri:${Math.round(info.triangles / 1000)}k`);
+  $('prof').textContent = lines.join('\n');
+  profSum.clear();
+}
+addEventListener('keydown', e => {
+  if(e.code !== 'KeyP' || e.target.tagName === 'INPUT') return;
+  profOn = !profOn;
+  profSum.clear();
+  $('prof').style.display = profOn ? 'block' : 'none';
+});
+
 // ---------- メインループ ----------
 function resize(){
   renderer.setSize(innerWidth, innerHeight);
@@ -2522,8 +2576,9 @@ function loop(now){
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   simT += dt;
-  updateCamera(dt);
-  updateCars(dt);
+  ptBegin();
+  updateCamera(dt);        pt('camera');
+  updateCars(dt);          pt('cars');
   updateMissiles(dt, now);
   for(let i = delayedBooms.length - 1; i >= 0; i--){   // 二次爆発の発火
     if(simT >= delayedBooms[i].t){
@@ -2532,26 +2587,29 @@ function loop(now){
       miniBoom(d);
     }
   }
-  updateBurning();
-  updateBurningBldgs();
-  updateNukeEmitters(dt);
-  updateCollapses(dt);
-  updateFx(dt);
-  updateDebris(dt);
-  updateBoomLights(dt);
+  pt('missiles');
+  updateBurning();         pt('burning');
+  updateBurningBldgs();    pt('brnBldgs');
+  updateNukeEmitters(dt);  pt('nukeEmit');
+  updateCollapses(dt);     pt('collapse');
+  updateFx(dt);            pt('fx');
+  updateDebris(dt);        pt('debris');
+  updateBoomLights(dt);    pt('boomLight');
   fireP.update(dt);
-  smokeP.update(dt);
+  smokeP.update(dt);       pt('particles');
   // 川の水面: さざ波テクスチャをゆっくり流し、わずかに揺らす
   if(waterTex){
     waterTex.offset.set(
       simT * 0.008 + 0.02 * Math.sin(simT * 0.5),
       simT * 0.005 + 0.02 * Math.cos(simT * 0.34));
   }
-  updateHUD();
+  updateHUD();             pt('hud');
   renderer.render(scene, camera);
+  pt('render');
   perfFrames++;
   if(now - perfLastT >= 500){
     $('perf').textContent = `${Math.round(perfFrames * 1000 / (now - perfLastT))} fps`;
+    if(profOn) profShow(perfFrames);
     perfFrames = 0; perfLastT = now;
   }
   requestAnimationFrame(loop);

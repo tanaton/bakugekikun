@@ -90,11 +90,12 @@
       <button id="regen" title="このシードで街を再生成">生成</button>
       <button id="rand" title="ランダムなシードで生成">乱数</button>
     </div>
+    <!-- ボタンのラベルはJS側の状態定義から入れる(初期化はgame側) -->
     <div class="seedrow">
-      <button id="timeBtn" style="flex:1" title="昼と夕暮れを切り替え">時間帯: 昼</button>
-      <button id="shadowBtn" title="影の描画を切り替え">影: ON</button>
+      <button id="timeBtn" style="flex:1" title="昼と夕暮れを切り替え"></button>
+      <button id="shadowBtn" title="影の描画を切り替え"></button>
     </div>
-    <div class="seedrow"><button id="weaponBtn" style="flex:1" title="右クリックで発射する弾種を切り替え">弾種: 単弾頭ミサイル</button></div>
+    <div class="seedrow"><button id="weaponBtn" style="flex:1" title="右クリックで発射する弾種を切り替え"></button></div>
     <div class="label" id="planName" style="margin-top:8px">都市プラン: —</div>
     <div class="label" id="perf" style="margin-top:4px">— fps</div>
     <div id="prof"></div>
@@ -119,7 +120,7 @@
     <div><span class="key">P</span><b>処理時間計測</b></div>
   </div>
 
-  <div class="panel" id="soundWrap"><button id="soundBtn">SOUND: ON</button></div>
+  <div class="panel" id="soundWrap"><button id="soundBtn"></button></div>
   <div id="hint">右クリックで爆撃地点を指定せよ</div>
   <div id="nukeFlash"></div>
 </div>

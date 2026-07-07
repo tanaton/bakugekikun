@@ -4763,35 +4763,59 @@ function makeHouseGeometry(){
   return mergeGroups([walls, roof]); // group0=壁 group1=屋根
 }
 
-// 木: 幹 + 樹冠(接地面y=0、高さ~1に正規化)。3種類の樹形
+// 木: 幹 + 樹冠(接地面y=0、高さ~1に正規化)。4種類の樹形。
+// 樹冠は低ポリのブロブを複数束ね、頂点を座標ハッシュでわずかに揺らして真球のCG感を消す
+// (乱数でなくハッシュなので決定的で、同一座標の頂点は同じ変位になり面が割れない)
 function makeTreeGeometries(){
-  const mkTrunk = () => {
-    const t = new THREE.CylinderGeometry(0.05, 0.09, 0.42, 5);
-    t.translate(0, 0.21, 0);
+  const wobble = (geo, amp) => {
+    const p = geo.getAttribute('position');
+    for(let i = 0; i < p.count; i++){
+      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      const n = k => { const v = Math.sin(x * 127.1 + y * 311.7 + z * 74.7 + k * 53.3) * 43758.5453; return v - Math.floor(v) - 0.5; };
+      p.setXYZ(i, x + n(1) * amp, y + n(2) * amp * 0.7, z + n(3) * amp);
+    }
+    geo.computeVertexNormals();
+    return geo;
+  };
+  const blob = (r, x, y, z, sy = 1) => {
+    const g = new THREE.IcosahedronGeometry(r, 0);
+    g.scale(1, sy, 1);
+    g.translate(x, y, z);
+    return g;
+  };
+  const mkTrunk = (rTop, rBot, h) => {
+    const t = new THREE.CylinderGeometry(rTop, rBot, h, 5);
+    t.translate(0, h / 2, 0);
     return t;
   };
-  // 0: 広葉樹(丸い樹冠)
-  const leaf0 = new THREE.IcosahedronGeometry(0.34, 1);
-  leaf0.translate(0, 0.62, 0);
-  // 1: 針葉樹(円錐)
-  const leaf1 = new THREE.ConeGeometry(0.27, 0.74, 7);
-  leaf1.translate(0, 0.6, 0);
-  // 2: ポプラ型(縦長の楕円)
-  const leaf2 = new THREE.IcosahedronGeometry(0.26, 1);
-  leaf2.scale(0.75, 1.55, 0.75);
-  leaf2.translate(0, 0.58, 0);
+  // 樹冠ブロブ群を1ジオメトリに畳んでから幹と結合する(group0=幹 group1=葉)
+  const canopy = (amp, ...blobs) => wobble(mergeGroups(blobs), amp);
+  const tree = (trunk, leaf) => mergeGroups([trunk, leaf]);
   return [
-    mergeGroups([mkTrunk(), leaf0]),   // group0=幹 group1=葉
-    mergeGroups([mkTrunk(), leaf1]),
-    mergeGroups([mkTrunk(), leaf2]),
+    // 0: 広葉樹(丸い樹冠をブロブ3つで)
+    tree(mkTrunk(0.05, 0.09, 0.42), canopy(0.06,
+      blob(0.30, 0, 0.62, 0), blob(0.20, 0.20, 0.50, 0.07), blob(0.19, -0.17, 0.55, -0.10))),
+    // 1: 針葉樹(円錐の2段重ね)
+    tree(mkTrunk(0.035, 0.06, 0.35), canopy(0.035,
+      new THREE.ConeGeometry(0.28, 0.50, 6).translate(0, 0.50, 0),
+      new THREE.ConeGeometry(0.19, 0.42, 6).translate(0, 0.82, 0))),
+    // 2: ポプラ型(縦長の楕円を2つ重ねる)
+    tree(mkTrunk(0.04, 0.06, 0.25), canopy(0.05,
+      blob(0.22, 0, 0.50, 0, 1.8), blob(0.15, 0, 0.85, 0, 1.5))),
+    // 3: ケヤキ型(短い幹から傘状に広がる樹冠)
+    tree(mkTrunk(0.05, 0.08, 0.50), canopy(0.06,
+      blob(0.34, 0, 0.66, 0, 0.62), blob(0.24, 0.18, 0.58, 0.12, 0.68), blob(0.22, -0.20, 0.60, -0.08, 0.65))),
   ];
 }
 
-// 木を1本登録(樹形と樹冠の幅係数wはここで抽選し個体差を出す)
+// 木を1本登録(樹形と樹冠の幅係数はここで抽選し個体差を出す)
 function pushTree(x, z, s, rng){
-  const type = Math.floor(rng() * 3);
+  // 樹種の抽選: 広葉樹32% / 針葉樹26% / ポプラ16% / ケヤキ26%
+  const r = rng();
+  const type = r < 0.32 ? 0 : r < 0.58 ? 1 : r < 0.74 ? 2 : 3;
   if(inWater(x, z)) return;                              // 川の中には生えない
-  trees.push({ x, z, s, w: 0.8 + rng() * 0.45, type, alive: true });
+  // w/w2: X/Z別の幅係数。非対称にすることで同じ樹形でも見る角度でシルエットが変わる
+  trees.push({ x, z, s, w: 0.8 + rng() * 0.45, w2: 0.8 + rng() * 0.45, type, alive: true });
 }
 
 // オフィスビル: 塔体 + 屋上ペントハウス(高さ-0.5..0.5に正規化)
@@ -4968,7 +4992,7 @@ function yardTrees(lot, n, rng, anywhere){
     const x = lot.x + lx * cosr + lz * sinr;
     const z = lot.z - lx * sinr + lz * cosr;
     if(!inMap(x, z, PLACE_LOT)) continue;
-    pushTree(x, z, 3 + rng() * 4.5, rng);
+    pushTree(x, z, 4.5 + rng() * 4, rng);
   }
 }
 
@@ -5481,7 +5505,7 @@ function generateCity(seedStr){
   for(const job of parkTreeJobs){
     for(let k = 0; k < job.n; k++){
       const pt = job.sample();
-      pushTree(pt.x, pt.z, 5 + rng() * 8, rng);
+      pushTree(pt.x, pt.z, 6.5 + rng() * 7, rng);
     }
   }
   buildRoadMask();
@@ -5498,7 +5522,7 @@ function generateCity(seedStr){
       for(const sgn of [1, -1]){
         const tx = p.x + p.dz * off * sgn, tz = p.z - p.dx * off * sgn;
         if(!inMap(tx, tz, PLACE_TREE) || onRoad(tx, tz)) continue;  // 交差点上には植えない
-        pushTree(tx, tz, 4.5 + rng() * 4, rng);
+        pushTree(tx, tz, 6 + rng() * 4, rng);
       }
     }
   }
@@ -5510,7 +5534,7 @@ function generateCity(seedStr){
       const s = sample();
       if(s.tn > 0.72 && rng() > Math.pow(Math.max(0, 1 - (s.tn - 0.72) / 0.26), 2)) continue;
       if(!inMap(s.x, s.z, PLACE_FOREST) || onRoad(s.x, s.z)) continue;
-      pushTree(s.x, s.z, 6 + rng() * 7, rng);
+      pushTree(s.x, s.z, 7 + rng() * 6.5, rng);
       placed++;
     }
   };
@@ -5537,8 +5561,11 @@ function generateCity(seedStr){
       return { x: f.x + Math.cos(a) * rr, z: f.z + Math.sin(a) * rr, tn: rr / f.r };
     });
   }
-  const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4f3a });
-  const leafCols = [0x4c7a36, 0x2f5a33, 0x53823a];   // 濃い緑(広葉樹 / 針葉樹 / ポプラ型)
+  const TREE_TYPES = 4;
+  // 樹種ごとの幹と葉の色(広葉樹 / 針葉樹 / ポプラ / ケヤキ)
+  const trunkCols = [0x6b4f3a, 0x5a4634, 0x7d7060, 0x64503c];
+  const trunkMats = trunkCols.map(c => new THREE.MeshLambertMaterial({ color: c }));
+  const leafCols = [0x4c7a36, 0x2f5a33, 0x6b8f3c, 0x3f6d38];
   const leafMats = leafCols.map(c => new THREE.MeshLambertMaterial({ color: c }));
   const treeGeos = makeTreeGeometries();
   // 木は空間チャンク×樹種ごとのInstancedMeshに分ける。街全体で1メッシュだと
@@ -5549,12 +5576,13 @@ function generateCity(seedStr){
     Math.floor((v + MAP_HALF) * TREE_CHUNKS / (MAP_HALF * 2))));
   const treeGroups = new Map();   // チャンク×樹種のキー → 本数(採番時はカウンタとして再利用)
   for(const t of trees){
-    t.ck = (chunkOf(t.x) * TREE_CHUNKS + chunkOf(t.z)) * 3 + t.type;
+    t.ck = (chunkOf(t.x) * TREE_CHUNKS + chunkOf(t.z)) * TREE_TYPES + t.type;
     treeGroups.set(t.ck, (treeGroups.get(t.ck) || 0) + 1);
   }
   const chunkMeshes = new Map();
   for(const [ck, n] of treeGroups){
-    const m = new THREE.InstancedMesh(treeGeos[ck % 3], [trunkMat, leafMats[ck % 3]], n);
+    const ty = ck % TREE_TYPES;
+    const m = new THREE.InstancedMesh(treeGeos[ty], [trunkMats[ty], leafMats[ty]], n);
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     chunkMeshes.set(ck, m);
     treeGroups.set(ck, 0);
@@ -5565,8 +5593,16 @@ function generateCity(seedStr){
     t.mi = treeGroups.get(t.ck);
     treeGroups.set(t.ck, t.mi + 1);
     t.gy = terrainH(t.x, t.z);
-    setInstanceAt(t.mesh, t.mi, t.x, t.gy - 0.2, t.z, 0, rng() * Math.PI * 2, 0, t.s * t.w, t.s, t.s * t.w);
-    t.mesh.setColorAt(t.mi, tCol.setRGB(1, 1, 1).offsetHSL((rng() - 0.5) * 0.06, 0, (rng() - 0.5) * 0.1 - 0.02));
+    setInstanceAt(t.mesh, t.mi, t.x, t.gy - 0.2, t.z, 0, rng() * Math.PI * 2, 0, t.s * t.w, t.s, t.s * t.w2);
+    // 個体差: 色相・彩度・明度を広めに振る。針葉樹以外の約12%は紅葉(黄 / 橙 / 赤)の個体にする
+    if(t.type !== 1 && rng() < 0.12){
+      const a = rng();
+      tCol.setRGB(...(a < 0.4 ? [1.9, 1.0, 0.35] : a < 0.75 ? [2.0, 0.72, 0.30] : [1.75, 0.5, 0.32]));
+      tCol.offsetHSL((rng() - 0.5) * 0.04, 0, (rng() - 0.5) * 0.1);
+    } else {
+      tCol.setRGB(1, 1, 1).offsetHSL((rng() - 0.5) * 0.09, (rng() - 0.5) * 0.25, (rng() - 0.5) * 0.14 - 0.02);
+    }
+    t.mesh.setColorAt(t.mi, tCol);
     hashInsert(treeGrid, t.x, t.z, t);
   }
   treeMeshes = [...chunkMeshes.values()];

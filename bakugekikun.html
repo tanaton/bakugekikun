@@ -5335,11 +5335,7 @@ function generateCity(seedStr){
   const nfEl = $('nukeFlash');
   nfEl.style.transition = 'none'; nfEl.style.opacity = '0';
   clearDebris();
-  // 焦げ跡は実体が旧cityGroupと一緒に破棄済みなので追跡用リストだけ空にする
-  scorchList.length = 0; scorchPending.clear();
-  scorchBatches.length = 0; scorchBakedCount = 0;
-  deadLots.length = 0; deadLotsDrawn = 0;      // 基礎跡・クレーター(テクスチャはdrawGroundが描き直す)
-  craters.length = 0; cratersDrawn = 0; groundStampAt = 0;
+  groundStamps.length = 0; stampsDrawn = 0; stampFlushAt = 0;   // 破壊跡(テクスチャはdrawGroundが描き直す)
   for(const L of boomLights) L.intensity = 0;
   fireP.clear(); smokeP.clear();
   stats.bDead = 0; stats.cDead = 0; stats.tDead = 0; stats.mCount = 0; stats.damage = 0; stats.shown = 0;
@@ -5690,56 +5686,104 @@ function buildWaterSurface(){
   }
 }
 
-// 破壊の跡は起伏に完全に沿う地面テクスチャへ直接描き込む(3D残骸は斜面でz-fightする)。
-// deadLots: 圧壊で消えた建物の基礎跡 / craters: 爆発で舗装が割れたクレーター
-const deadLots = [];   // {x,z,sx,sz,rot}
-const craters = [];    // {x,z,r,seed} 形はseedから再現するため時間帯の塗り直しでも変わらない
+// 破壊の跡(基礎跡・クレーター・焦げ跡)はすべて、起伏に完全に沿う地面テクスチャへ
+// 直接描き込む。3Dデカールは頂点間の直線補間が地面メッシュの起伏とずれて浮き・埋まりが
+// 出るため使わない。リストは時系列順に保持し、時間帯の塗り直しでも同順・同形で再現する
+const groundStamps = [];   // {kind:'lot'|'crater'|'scorch'|'nuke', x, z, ...}
 const FOUNDATION_STYLE = 'rgba(24,22,19,0.85)';
-let deadLotsDrawn = 0, cratersDrawn = 0;   // gCanvasへ描き込み済みの件数
-let groundStampAt = 0;                     // GPU転送の間引き用(連続爆撃で毎フレーム転送しない)
-function stampFoundation(g, s, w2c, d){
-  g.save();
-  g.translate(w2c(d.x), w2c(d.z));
-  g.rotate(-d.rot);
-  g.fillRect(-d.sx / 2 * s, -d.sz / 2 * s, d.sx * s, d.sz * s);
-  g.restore();
-}
-// 爆発クレーター: 地肌がのぞく不整形の穴 + 中心の深い穴。
-// 焦げ跡デカールの中心はほぼ不透明の黒なので、その外側に見える大きさで描く
-function stampCrater(g, s, w2c, G, c){
-  const rand = mulberry32(c.seed), r = c.r * s;
-  g.save();
-  g.translate(w2c(c.x), w2c(c.z));
-  // 半径の揺らぎを小さく・頂点を多めにして、星型ではなく丸みのある不整形の多角形にする
-  const blob = rr => {
-    const n = 12 + (rand() * 4 | 0), a0 = rand() * Math.PI * 2;
-    g.beginPath();
-    for(let i = 0; i < n; i++){
-      const a = a0 + i / n * Math.PI * 2 + (rand() - 0.5) * 0.25;
-      const rj = rr * (0.88 + rand() * 0.24);
-      i ? g.lineTo(Math.cos(a) * rj, Math.sin(a) * rj) : g.moveTo(Math.cos(a) * rj, Math.sin(a) * rj);
+let stampsDrawn = 0;    // gCanvasへ描き込み済みの件数
+let stampFlushAt = 0;   // GPU転送の間引き用(連続爆撃で毎フレーム転送しない)
+// 地肌の露出済み領域マスク。地肌は不透明で塗るが「先に露出した領域には上書きしない」
+// ことで、露出済みの上に溜まった焦げ跡を後発の爆発が塗り潰さないようにする。
+// drawGroundの全再描画時はクリアして時系列順に作り直す
+const dirtMask = document.createElement('canvas');
+dirtMask.width = dirtMask.height = 2048;
+const dirtMaskCtx = dirtMask.getContext('2d');
+const dirtScratch = document.createElement('canvas');   // 1クレーター分の作業用
+dirtScratch.width = dirtScratch.height = 320;
+const dirtScratchCtx = dirtScratch.getContext('2d');
+function drawStamp(g, s, w2c, G, st){
+  const px = w2c(st.x), pz = w2c(st.z), r = (st.r || 0) * s;
+  if(st.kind === 'lot'){             // 圧壊した建物の基礎跡
+    g.save();
+    g.translate(px, pz);
+    g.rotate(-st.rot);
+    g.fillStyle = FOUNDATION_STYLE;
+    g.fillRect(-st.sx / 2 * s, -st.sz / 2 * s, st.sx * s, st.sz * s);
+    g.restore();
+  } else if(st.kind === 'crater'){   // 舗装が割れて地肌がのぞくクレーター + 中心の深い穴
+    const rand = mulberry32(st.seed);
+    // 半径の揺らぎを小さく・頂点を多めにして、星型ではなく丸みのある不整形の多角形にする
+    const blob = rr => {
+      const p = new Path2D();
+      const n = 12 + (rand() * 4 | 0), a0 = rand() * Math.PI * 2;
+      for(let i = 0; i < n; i++){
+        const a = a0 + i / n * Math.PI * 2 + (rand() - 0.5) * 0.25;
+        const rj = rr * (0.88 + rand() * 0.24);
+        i ? p.lineTo(Math.cos(a) * rj, Math.sin(a) * rj) : p.moveTo(Math.cos(a) * rj, Math.sin(a) * rj);
+      }
+      p.closePath();
+      return p;
+    };
+    const outer = blob(r), hole = blob(r * 0.45);
+    // 地肌: スクラッチに不透明で描き、露出済みマスク分を打ち抜いてから本体へ転写する
+    // (未露出の画素だけが塗られ、露出済み領域の上の焦げ跡はそのまま残る)
+    const sc = dirtScratchCtx, half = dirtScratch.width / 2;
+    sc.save();
+    sc.clearRect(0, 0, dirtScratch.width, dirtScratch.height);
+    sc.translate(half, half);
+    sc.fillStyle = G.crater;
+    sc.fill(outer);
+    sc.setTransform(1, 0, 0, 1, 0, 0);
+    sc.globalCompositeOperation = 'destination-out';
+    sc.drawImage(dirtMask, px - half, pz - half, dirtScratch.width, dirtScratch.height,
+      0, 0, dirtScratch.width, dirtScratch.height);
+    sc.restore();
+    g.drawImage(dirtScratch, px - half, pz - half);
+    // 今回の露出領域をマスクへ追加
+    dirtMaskCtx.save();
+    dirtMaskCtx.translate(px, pz);
+    dirtMaskCtx.fill(outer);
+    dirtMaskCtx.restore();
+    // 中心の深い穴は最後の爆発が上書きしてよい
+    g.save();
+    g.translate(px, pz);
+    g.fillStyle = 'rgba(10,9,8,0.55)';
+    g.fill(hole);
+    g.restore();
+  } else {                           // 焦げ跡(scorch=通常 / nuke=核)の放射状グラデーション
+    const grd = g.createRadialGradient(px, pz, r * (st.kind === 'nuke' ? 0.09 : 0.06), px, pz, r);
+    if(st.kind === 'nuke'){
+      grd.addColorStop(0, 'rgba(8,8,8,0.92)'); grd.addColorStop(0.55, 'rgba(14,12,10,0.75)');
+      grd.addColorStop(1, 'rgba(20,16,12,0)');
+    } else {
+      grd.addColorStop(0, 'rgba(8,8,8,0.9)'); grd.addColorStop(0.45, 'rgba(12,11,9,0.78)');
+      grd.addColorStop(0.75, 'rgba(16,13,11,0.4)'); grd.addColorStop(1, 'rgba(20,16,12,0)');
     }
-    g.closePath();
-  };
-  g.fillStyle = G.crater;            blob(r);        g.fill();
-  g.fillStyle = 'rgba(10,9,8,0.55)'; blob(r * 0.45); g.fill();
-  g.restore();
+    g.fillStyle = grd;
+    g.beginPath(); g.arc(px, pz, r, 0, Math.PI * 2); g.fill();
+  }
 }
-function addCrater(x, z, r){
-  craters.push({ x, z, r, seed: (Math.random() * 2 ** 31) | 0 });
+// 基礎跡を登録する。ただしクレーター中心の深い穴(半径の内側50%)に入る場合は描かない。
+// 穴の中まで基礎が見えると「吹き飛んだ穴」感が消えるため。穴の外の地肌露出部や
+// 焦げ跡の下では基礎跡を残す(どちらも半透明なので基礎が透けて自然に見える)
+function pushLotStamp(b){
+  for(const st of groundStamps){
+    if(st.kind !== 'crater') continue;
+    const dx = b.x - st.x, dz = b.z - st.z, rr = st.r * 0.5;
+    if(dx * dx + dz * dz < rr * rr) return;
+  }
+  groundStamps.push({ kind: 'lot', x: b.x, z: b.z, sx: b.sx, sz: b.sz, rot: b.rot });
 }
 // 新しく増えた跡だけをテクスチャへ差分追記する(drawGroundの全再描画は重い)
 function flushGroundStamps(){
-  if((deadLotsDrawn >= deadLots.length && cratersDrawn >= craters.length) || simT < groundStampAt) return;
-  groundStampAt = simT + 0.15;
+  if(stampsDrawn >= groundStamps.length || simT < stampFlushAt) return;
+  stampFlushAt = simT + 0.15;
   const TEX = 2048, WORLD = 5400, s = TEX / WORLD;
   const w2c = v => (v + WORLD / 2) * s;
   const G = TIMES[timeMode].ground;
-  gCtx.fillStyle = FOUNDATION_STYLE;
-  for(; deadLotsDrawn < deadLots.length; deadLotsDrawn++)
-    stampFoundation(gCtx, s, w2c, deadLots[deadLotsDrawn]);
-  for(; cratersDrawn < craters.length; cratersDrawn++)
-    stampCrater(gCtx, s, w2c, G, craters[cratersDrawn]);
+  for(; stampsDrawn < groundStamps.length; stampsDrawn++)
+    drawStamp(gCtx, s, w2c, G, groundStamps[stampsDrawn]);
   gTex.needsUpdate = true;
 }
 
@@ -5843,12 +5887,10 @@ function drawGround(){
   g.setLineDash([6, 8]);
   for(const rp of roadPaths) if(rp.major) strokeRoad(rp, 1 / s, G.lane);   // センターライン(1px)
   g.setLineDash([]);
-  // 破壊済み建物の基礎跡と爆発クレーター(時間帯トグルの塗り直しでも復元する)
-  g.fillStyle = FOUNDATION_STYLE;
-  for(const d of deadLots) stampFoundation(g, s, w2c, d);
-  deadLotsDrawn = deadLots.length;
-  for(const c of craters) stampCrater(g, s, w2c, G, c);
-  cratersDrawn = craters.length;
+  // 破壊の跡(基礎跡・クレーター・焦げ跡)を時系列順に描き直す(地肌マスクも作り直す)
+  dirtMaskCtx.clearRect(0, 0, dirtMask.width, dirtMask.height);
+  for(const st of groundStamps) drawStamp(g, s, w2c, G, st);
+  stampsDrawn = groundStamps.length;
   gTex.needsUpdate = true;
 }
 
@@ -6144,92 +6186,6 @@ function releaseFx(f){
   if(key) fxFree.get(key).push(f.mesh);
   else if(f.mesh.material) f.mesh.material.dispose();   // プール外の一時メッシュ
 }
-// 焦げ跡: 放射状グラデーションのデカール用マテリアル(全爆発で共用・生成は起動時1回)
-function makeScorchMaterial(innerR, stops){
-  const c = document.createElement('canvas'); c.width = c.height = 128;
-  const x = c.getContext('2d');
-  const g = x.createRadialGradient(64, 64, innerR, 64, 64, 64);
-  for(const [o, col] of stops) g.addColorStop(o, col);
-  x.fillStyle = g; x.fillRect(0, 0, 128, 128);
-  return new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c),
-    transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
-}
-const scorchMat = makeScorchMaterial(4, [
-  [0, 'rgba(8,8,8,0.9)'], [0.45, 'rgba(12,11,9,0.78)'], [0.75, 'rgba(16,13,11,0.4)'], [1, 'rgba(20,16,12,0)']]);
-const nukeScorchMat = makeScorchMaterial(6, [
-  [0, 'rgba(8,8,8,0.92)'], [0.55, 'rgba(14,12,10,0.75)'], [1, 'rgba(20,16,12,0)']]);
-// 表示中の焦げ跡(古い順)。個別メッシュのまま無制限に増やすとドローコールが蓄積するため、
-// 直近の分だけ個別メッシュで保持し、あふれた分は複数枚を1メッシュに焼き込んで統合する。
-// 統合後も含めて合計約1000発分が残る(超過分は統合メッシュ単位で古い順に破棄)
-const scorchList = [];
-const SCORCH_LIVE_MAX = 40;    // 個別メッシュのまま保持する枚数
-const SCORCH_BAKE_SIZE = 48;   // この枚数たまるごとに1メッシュへ統合
-const SCORCH_BAKED_MAX = 960;  // 統合メッシュ側に保持する合計枚数の上限
-const scorchPending = new Map();   // material → 統合待ちの個別メッシュ
-const scorchBatches = [];          // { mesh, count } 古い順
-let scorchBakedCount = 0;
-// 統合待ちの個別メッシュ群を1つのジオメトリへ焼き込む(頂点はワールド座標に変換済みで格納)
-function bakeScorchBatch(mat, list){
-  let vCount = 0, iCount = 0;
-  for(const m of list){ vCount += m.geometry.getAttribute('position').count; iCount += m.geometry.index.count; }
-  const pos = new Float32Array(vCount * 3), uv = new Float32Array(vCount * 2);
-  const idx = vCount > 65535 ? new Uint32Array(iCount) : new Uint16Array(iCount);
-  let vo = 0, io = 0;
-  for(const m of list){
-    const p = m.geometry.getAttribute('position'), u = m.geometry.getAttribute('uv'), ix = m.geometry.index;
-    for(let i = 0; i < p.count; i++){
-      pos[(vo + i) * 3]     = p.getX(i) + m.position.x;
-      pos[(vo + i) * 3 + 1] = p.getY(i) + m.position.y;
-      pos[(vo + i) * 3 + 2] = p.getZ(i) + m.position.z;
-      uv[(vo + i) * 2] = u.getX(i); uv[(vo + i) * 2 + 1] = u.getY(i);
-    }
-    for(let i = 0; i < ix.count; i++) idx[io + i] = ix.getX(i) + vo;
-    vo += p.count; io += ix.count;
-    cityGroup.remove(m);
-    m.geometry.dispose();
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  g.setIndex(new THREE.BufferAttribute(idx, 1));
-  const mesh = new THREE.Mesh(g, mat);
-  cityGroup.add(mesh);
-  scorchBatches.push({ mesh, count: list.length });
-  scorchBakedCount += list.length;
-  while(scorchBakedCount > SCORCH_BAKED_MAX){
-    const b = scorchBatches.shift();
-    cityGroup.remove(b.mesh);
-    b.mesh.geometry.dispose();
-    scorchBakedCount -= b.count;
-  }
-}
-// 焦げ跡デカール: 内部にも頂点を持つ格子を地形に沿わせて密着させる
-function addScorch(p, gy, size, segs, lift, mat){
-  const sg = new THREE.PlaneGeometry(size, size, segs, segs);
-  sg.rotateX(-Math.PI / 2);
-  const spos = sg.getAttribute('position');
-  for(let i = 0; i < spos.count; i++){
-    const wx = spos.getX(i) + p.x, wz = spos.getZ(i) + p.z;
-    // 水域にかかる頂点は水面下へ沈め、不透明な水面で隠す
-    spos.setY(i, terrainH(wx, wz) - gy + (inWater(wx, wz) ? -3 : lift));
-  }
-  const mesh = new THREE.Mesh(sg, mat);
-  mesh.position.set(p.x, gy, p.z);
-  cityGroup.add(mesh);
-  scorchList.push(mesh);
-  if(scorchList.length > SCORCH_LIVE_MAX){
-    const old = scorchList.shift();
-    // 表示したまま統合待ちへ回し、規定枚数たまったら1メッシュに焼き込む(マテリアル別)
-    let pend = scorchPending.get(old.material);
-    if(!pend) scorchPending.set(old.material, pend = []);
-    pend.push(old);
-    if(pend.length >= SCORCH_BAKE_SIZE){
-      bakeScorchBatch(old.material, pend);
-      pend.length = 0;
-    }
-  }
-}
-
 const raycaster = new THREE.Raycaster();
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
@@ -6370,10 +6326,10 @@ function detonate(p, R = 105){
   // --- 衝撃波リング(発光 + 土埃の二重) ---
   ringFx(fxRingAddD(0xffd9a8, 0.95), p.x, gy + 2.5, p.z, 0.7, 8 * f, 420 * f, 0.55, 0.95);
   ringFx(fxRingD(0x8a7458, 0.5), p.x, gy + 1.8, p.z, 1.5, 12 * f, 520 * f, 0.6, 0.5);
-  // --- 焦げ跡と、舗装の割れたクレーター(水中への着弾は跡を残さない) ---
+  // --- クレーターと焦げ跡を地面テクスチャへ焼き込む(水中への着弾は跡を残さない) ---
   if(!inWater(p.x, p.z)){
-    addScorch(p, gy, R * 3.2, 16, 0.5, scorchMat);
-    addCrater(p.x, p.z, R * 0.7);   // 地肌の露出は破壊半径より狭く
+    groundStamps.push({ kind: 'crater', x: p.x, z: p.z, r: R * 0.7, seed: (Math.random() * 2 ** 31) | 0 });
+    groundStamps.push({ kind: 'scorch', x: p.x, z: p.z, r: R * 1.6 });
   }
   // --- 火球パーティクル(白核 → 橙 → 深紅の三層) ---
   const cnt = n => Math.max(4, Math.round(n * f));
@@ -6539,9 +6495,9 @@ function detonateNuke(p){
   ringFx(fxRingD(0x8a7458, 0.6), p.x, gy + 2, p.z, 3.5, 30, 1900, 0.6, 0.6);
   // --- 上空の凝結リング(ウィルソン雲) ---
   ringFx(fxRingD(0xf0f4f8, 0.55), p.x, gy + 260, p.z, 2.2, 80, 850, 0.7, 0.55);
-  // --- 巨大な焦げ跡(放射状グラデーション・地形に沿う)と舗装の破壊跡 ---
-  addScorch(p, gy, R * 2.6, 24, 0.7, nukeScorchMat);
-  addCrater(p.x, p.z, R * 0.7);   // 地肌の露出は全壊半径より狭く
+  // --- 巨大な焦げ跡と舗装の破壊跡を地面テクスチャへ焼き込む ---
+  groundStamps.push({ kind: 'crater', x: p.x, z: p.z, r: R * 0.7, seed: (Math.random() * 2 ** 31) | 0 });
+  groundStamps.push({ kind: 'nuke', x: p.x, z: p.z, r: R * 1.3 });
   // --- 土煙・スパーク・瓦礫 ---
   for(let i = 0; i < 150; i++){
     const a = Math.random() * Math.PI * 2;
@@ -6678,7 +6634,7 @@ function updateCollapses(dt){
         const mesh = bMeshes[b.k];
         mesh.setColorAt(b.mi, FALLEN_COL);
         mesh.instanceColor.needsUpdate = true;
-        deadLots.push({ x: b.x, z: b.z, sx: b.sx, sz: b.sz, rot: b.rot });   // 根本の基礎跡
+        pushLotStamp(b);   // 根本の基礎跡(焦げ跡の中では省略される)
         // 着地の粉塵が倒れた方向に走る
         for(let j = 0; j < 16; j++){
           const dd = b.h * (0.15 + Math.random() * 0.85);
@@ -6706,7 +6662,7 @@ function updateCollapses(dt){
       if(c.t >= 1){
         b.state = 2;
         bMeshes[b.k].setMatrixAt(b.mi, HIDDEN_MAT);
-        deadLots.push({ x: b.x, z: b.z, sx: b.sx, sz: b.sz, rot: b.rot });
+        pushLotStamp(b);
         collapsing.splice(i, 1);
         continue;
       }

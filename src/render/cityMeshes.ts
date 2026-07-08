@@ -22,7 +22,15 @@ export interface CityView {
   ground: GroundView;
   water: WaterView | null;
   emissiveMats: THREE.MeshLambertMaterial[];   // 時間帯で窓明かりの強さを切り替える
+  litAttrs: THREE.InstancedBufferAttribute[];  // 建物ごとの窓明かり(1=点灯 0=消灯)。bMeshesと同順
   dispose(): void;
+}
+
+// 建物1棟の窓明かりを点灯/消灯する(崩壊した建物は停電させる)
+export function setBuildingLit(view: CityView, b: Building, on: boolean): void {
+  const a = view.litAttrs[b.k];
+  (a.array as Float32Array)[b.mi] = on ? 1 : 0;
+  a.needsUpdate = true;
 }
 
 // 倒壊した建物の焼け色(このモジュールがcolorModeを先にimportしているので変換されない)
@@ -69,11 +77,22 @@ const _color = new THREE.Color();
 // チャンク単位のフラスタムカリングで画面外の木のGPU負荷を落とす。
 // (buildCityViewから関数として分離: 数万要素の作業配列をdisposeクロージャの
 //  スコープに置かない=街の生存期間中メモリに残さないため)
+// インスタンス色の乗算を外すシェーダーパッチ。
+// 個体差・紅葉の色はインスタンス色で葉に掛けるが、同じ色が幹にも掛かって
+// 紅葉の幹が赤くなってしまうため、幹のマテリアルはインスタンス色を無視する
+const ignoreInstanceColor = (sh: { vertexShader: string }): void => {
+  sh.vertexShader = sh.vertexShader.replace('vColor.rgb *= instanceColor.rgb;', '');
+};
+
 function buildTreeChunks(city: CityData): THREE.InstancedMesh[] {
   const TREE_TYPES = 4;
   // 樹種ごとの幹と葉の色(広葉樹 / 針葉樹 / ポプラ / ケヤキ)
   const trunkMats = [0x6b4f3a, 0x5a4634, 0x7d7060, 0x64503c]
-    .map(c => new THREE.MeshLambertMaterial({ color: c }));
+    .map(c => {
+      const m = new THREE.MeshLambertMaterial({ color: c });
+      m.onBeforeCompile = ignoreInstanceColor;
+      return m;
+    });
   const leafMats = [0x4c7a36, 0x2f5a33, 0x6b8f3c, 0x3f6d38]
     .map(c => new THREE.MeshLambertMaterial({ color: c }));
   const treeGeos = makeTreeGeometries();
@@ -144,25 +163,52 @@ export function buildCityView(scene: THREE.Scene, city: CityData, timeMode: Time
   for (const b of city.buildings) counts[b.k] = Math.max(counts[b.k], b.mi + 1);
 
   const emissiveMats: THREE.MeshLambertMaterial[] = [];
-  const mkFacade = (t: TexPair, eScale: number): THREE.MeshLambertMaterial => {
+  // 窓明かりの消灯用インスタンス属性 'lit' をemissiveに乗算する。
+  // emissiveはインスタンス色の影響を受けないため、倒壊した建物の窓が
+  // 光りっぱなしにならないよう属性で制御する
+  const litEmissive = (sh: { vertexShader: string; fragmentShader: string }): void => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float lit;\nvarying float vLit;')
+      .replace('#include <begin_vertex>', 'vLit = lit;\n#include <begin_vertex>');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vLit;')
+      .replace('vec3 totalEmissiveRadiance = emissive;',
+        'vec3 totalEmissiveRadiance = emissive * vLit;');
+  };
+  const mkFacade = (t: TexPair, eScale: number, eCol: number): THREE.MeshLambertMaterial => {
     const m = new THREE.MeshLambertMaterial({
-      map: t.map, emissive: new THREE.Color(0xffc98a),
+      map: t.map, emissive: new THREE.Color(eCol),
       emissiveMap: t.emissiveMap, emissiveIntensity: TIMES[timeMode].emissive * eScale });
+    m.onBeforeCompile = litEmissive;
     m.userData.eScale = eScale;
     emissiveMats.push(m);
     return m;
   };
+  // 窓明かりの色: コンクリビル=温白、ガラスビル=蛍光灯寄りの涼白、民家=電球色寄りの白
   const texRng = rngFor(city.seed, 'facadeTex');
-  const conMat = mkFacade(makeConcreteTexture(texRng), 1);
-  const glaMat = mkFacade(makeGlassTexture(texRng), 1.2);
-  const houMat = mkFacade(makeHouseTexture(texRng), 0.8);
+  const conMat = mkFacade(makeConcreteTexture(texRng), 1, 0xffe9c8);
+  const glaMat = mkFacade(makeGlassTexture(texRng), 1.2, 0xe9f0fa);
+  const houMat = mkFacade(makeHouseTexture(texRng), 0.8, 0xffdfb4);
   const roofTopMat = new THREE.MeshLambertMaterial({ color: 0x484c53 });
   const towerGeo = makeTowerGeometry();
   const houseGeo = makeHouseGeometry();
+  // 頂点属性・インデックス・グループは共有しつつ、インスタンス属性 'lit' だけ
+  // メッシュごとに持つジオメトリを作る(litAttrsはbMeshesと同順に積まれる)
+  const litAttrs: THREE.InstancedBufferAttribute[] = [];
+  const withLit = (src: THREE.BufferGeometry, n: number): THREE.BufferGeometry => {
+    const geo = new THREE.BufferGeometry();
+    geo.index = src.index;
+    for (const name of Object.keys(src.attributes)) geo.setAttribute(name, src.attributes[name]);
+    for (const g of src.groups) geo.addGroup(g.start, g.count, g.materialIndex);
+    const lit = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, n)).fill(1), 1);
+    geo.setAttribute('lit', lit);
+    litAttrs.push(lit);
+    return geo;
+  };
   const bMeshes = [
-    new THREE.InstancedMesh(towerGeo, [conMat, roofTopMat], counts[0]),
-    new THREE.InstancedMesh(towerGeo, [glaMat, roofTopMat], counts[1]),
-    ...ROOF_COLS.map((c, ri) => new THREE.InstancedMesh(houseGeo,
+    new THREE.InstancedMesh(withLit(towerGeo, counts[0]), [conMat, roofTopMat], counts[0]),
+    new THREE.InstancedMesh(withLit(towerGeo, counts[1]), [glaMat, roofTopMat], counts[1]),
+    ...ROOF_COLS.map((c, ri) => new THREE.InstancedMesh(withLit(houseGeo, counts[HOUSE_K0 + ri]),
       [houMat, new THREE.MeshLambertMaterial({ color: c })], counts[HOUSE_K0 + ri])),
   ];
   for (const m of bMeshes) m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -198,7 +244,7 @@ export function buildCityView(scene: THREE.Scene, city: CityData, timeMode: Time
   ground.drawGround(G);
 
   return {
-    group, bMeshes, treeChunks, carMesh, ground, water, emissiveMats,
+    group, bMeshes, treeChunks, carMesh, ground, water, emissiveMats, litAttrs,
     dispose: makeDisposer(scene, group),
   };
 }

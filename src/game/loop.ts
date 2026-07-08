@@ -11,6 +11,40 @@ import { updateCollapses } from './destruction';
 import { updateMissiles } from './missiles';
 import type { World } from './world';
 
+// 1フレームぶんのシミュレーション進行(カメラ・HUD・renderer.render以外の全部)。
+// スモークテストもこの関数で実機と同じ経路を回す
+export function stepSim(world: World, dt: number, now: number): void {
+  const { gfx, sim } = world;
+  sim.simT += dt;
+  updateCars(world, dt);   pt('cars');
+  updateMissiles(world, dt, now);
+  for (let i = sim.delayedBooms.length - 1; i >= 0; i--) {   // 二次爆発の発火
+    if (sim.simT >= sim.delayedBooms[i].t) {
+      const d = sim.delayedBooms[i];
+      sim.delayedBooms.splice(i, 1);
+      miniBoom(world, d);
+    }
+  }
+  pt('missiles');
+  updateBurning(world);          pt('burning');
+  updateBurningBldgs(world);     pt('brnBldgs');
+  updateNukeEmitters(world, dt); pt('nukeEmit');
+  updateCollapses(world, dt);
+  world.view.ground.flush(sim.simT, TIMES[world.settings.timeMode].ground);
+  pt('collapse');
+  updateFx(world, dt);           pt('fx');
+  world.debris.update(dt, world.city.terrain); pt('debris');
+  updateBoomLights(world, dt);   pt('boomLight');
+  gfx.fireP.update(dt);
+  gfx.smokeP.update(dt);         pt('particles');
+  // 川の水面: さざ波テクスチャをゆっくり流し、わずかに揺らす
+  if (world.view.water) {
+    world.view.water.tex.offset.set(
+      sim.simT * 0.008 + 0.02 * Math.sin(sim.simT * 0.5),
+      sim.simT * 0.005 + 0.02 * Math.cos(sim.simT * 0.34));
+  }
+}
+
 export function startLoop(world: World, input: InputState): void {
   let last = performance.now();
   // FPS表示: 0.5秒ごとに更新
@@ -20,37 +54,10 @@ export function startLoop(world: World, input: InputState): void {
     const { gfx, sim } = world;
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
-    sim.simT += dt;
     ptBegin();
     updateCamera(input, dt, world.city.terrain, gfx.camera, gfx.sunShadow, sim);
     pt('camera');
-    updateCars(world, dt);   pt('cars');
-    updateMissiles(world, dt, now);
-    for (let i = sim.delayedBooms.length - 1; i >= 0; i--) {   // 二次爆発の発火
-      if (sim.simT >= sim.delayedBooms[i].t) {
-        const d = sim.delayedBooms[i];
-        sim.delayedBooms.splice(i, 1);
-        miniBoom(world, d);
-      }
-    }
-    pt('missiles');
-    updateBurning(world);          pt('burning');
-    updateBurningBldgs(world);     pt('brnBldgs');
-    updateNukeEmitters(world, dt); pt('nukeEmit');
-    updateCollapses(world, dt);
-    world.view.ground.flush(sim.simT, TIMES[world.settings.timeMode].ground);
-    pt('collapse');
-    updateFx(world, dt);           pt('fx');
-    world.debris.update(dt, world.city.terrain); pt('debris');
-    updateBoomLights(world, dt);   pt('boomLight');
-    gfx.fireP.update(dt);
-    gfx.smokeP.update(dt);         pt('particles');
-    // 川の水面: さざ波テクスチャをゆっくり流し、わずかに揺らす
-    if (world.view.water) {
-      world.view.water.tex.offset.set(
-        sim.simT * 0.008 + 0.02 * Math.sin(sim.simT * 0.5),
-        sim.simT * 0.005 + 0.02 * Math.cos(sim.simT * 0.34));
-    }
+    stepSim(world, dt, now);
     updateHUD(sim.stats);          pt('hud');
     gfx.renderer.render(gfx.scene, gfx.camera);
     pt('render');

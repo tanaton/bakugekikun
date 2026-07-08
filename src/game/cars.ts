@@ -1,5 +1,6 @@
 // 車の走行(道路パスに沿う)
 
+import { ROAD_STEP } from '../core/config';
 import { carPose } from '../core/roads';
 import type { World } from './world';
 
@@ -13,7 +14,13 @@ export function updateCars(world: World, dt: number): void {
     const c = city.cars[ci];
     if (c.parked || !c.alive) continue;
     c.s += c.speed * c.dir * dt;
-    const p = carPose(city.roadPaths[c.road], c.s);
+    const road = city.roadPaths[c.road];
+    if (!road.loop) {   // 行き止まりでは反対端へワープせず、折り返して往復する
+      const maxS = (road.pts.length - 1) * ROAD_STEP;
+      if (c.s >= maxS) { c.s = maxS * 2 - c.s; c.dir = -1; }
+      else if (c.s <= 0) { c.s = -c.s; c.dir = 1; }
+    }
+    const p = carPose(road, c.s);
     const px = p.x + p.dz * c.lane, pz = p.z - p.dx * c.lane;   // 進行方向の横にレーンオフセット
     c.px = px; c.pz = pz;   // destroyAroundの被弾判定用にキャッシュ(carPoseの再計算を避ける)
     const hx = p.dx * c.dir, hz = p.dz * c.dir;   // 正規化済みの進行方向

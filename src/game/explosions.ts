@@ -155,6 +155,7 @@ export function detonate(world: World, p: { x: number; y: number; z: number }, R
 // 二次爆発(小型・時間差で誘爆する)
 export function miniBoom(world: World, d: { x: number; z: number }): void {
   const { gfx, city, debris } = world;
+  if (city.terrain.inWater(d.x, d.z)) return;   // 水面下からは誘爆させない(着弾同様、水は跡も演出も残さない)
   const gy = city.terrain.h(d.x, d.z);
   flashLight(world, d.x, d.z, 3.5, gy);
   growFx(world, gfx.fx.sphereAdd(0xff7a30, 0.95), d.x, gy + 6, d.z, 0.5, 4, 42, 0.5, 0.95, 1.2);
@@ -244,9 +245,11 @@ export function detonateNuke(world: World, p: { x: number; y: number; z: number 
   ringFx(world, FX.ringD(0x8a7458, 0.6), p.x, gy + 2, p.z, 3.5, 30, 1900, 0.6, 0.6);
   // --- 上空の凝結リング(ウィルソン雲) ---
   ringFx(world, FX.ringD(0xf0f4f8, 0.55), p.x, gy + 260, p.z, 2.2, 80, 850, 0.7, 0.55);
-  // --- 巨大な焦げ跡と舗装の破壊跡を地面テクスチャへ焼き込む ---
-  view.ground.pushCrater(p.x, p.z, R * 0.7);
-  view.ground.pushStamp({ kind: 'nuke', x: p.x, z: p.z, r: R * 1.3 });
+  // --- 巨大な焦げ跡と舗装の破壊跡を地面テクスチャへ焼き込む(水中への着弾は跡を残さない) ---
+  if (!city.terrain.inWater(p.x, p.z)) {
+    view.ground.pushCrater(p.x, p.z, R * 0.7);
+    view.ground.pushStamp({ kind: 'nuke', x: p.x, z: p.z, r: R * 1.3 });
+  }
   // --- 土煙・スパーク・瓦礫 ---
   for (let i = 0; i < 150; i++) {
     const a = Math.random() * Math.PI * 2;

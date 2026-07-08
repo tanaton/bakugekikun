@@ -51,12 +51,9 @@ const { FxPools } = await import('../src/render/fxPool');
 const { makeLightPool } = await import('../src/render/lightPool');
 const { SunShadow } = await import('../src/render/sky');
 const { applyTime, createWorld, regenerate } = await import('../src/game/world');
-const { detonate, detonateNuke, miniBoom, updateFx, updateNukeEmitters, updateBoomLights } =
-  await import('../src/game/explosions');
-const { updateCollapses } = await import('../src/game/destruction');
-const { updateBurning, updateBurningBldgs } = await import('../src/game/fire');
-const { requestStrike, updateMissiles } = await import('../src/game/missiles');
-const { updateCars } = await import('../src/game/cars');
+const { detonate, detonateNuke } = await import('../src/game/explosions');
+const { requestStrike } = await import('../src/game/missiles');
+const { stepSim } = await import('../src/game/loop');
 const { B } = await import('../src/core/types');
 import type { Gfx } from '../src/render/gfx';
 
@@ -85,30 +82,6 @@ function makeFakeGfx(): Gfx {
   };
 }
 
-// 1フレームぶんのシミュレーション(renderer.render以外のループ本体)
-function step(world: ReturnType<typeof createWorld>, dt: number, now: number): void {
-  const { sim } = world;
-  sim.simT += dt;
-  updateCars(world, dt);
-  updateMissiles(world, dt, now);
-  for (let i = sim.delayedBooms.length - 1; i >= 0; i--) {
-    if (sim.simT >= sim.delayedBooms[i].t) {
-      const d = sim.delayedBooms[i];
-      sim.delayedBooms.splice(i, 1);
-      miniBoom(world, d);
-    }
-  }
-  updateBurning(world);
-  updateBurningBldgs(world);
-  updateNukeEmitters(world, dt);
-  updateCollapses(world, dt);
-  updateFx(world, dt);
-  world.debris.update(dt, world.city.terrain);
-  updateBoomLights(world, dt);
-  world.gfx.fireP.update(dt);
-  world.gfx.smokeP.update(dt);
-}
-
 describe('ゲーム統合スモーク(nodeスタブ)', () => {
   it('街の構築 → 爆撃 → 破壊 → 核 → 再生成が例外なく通り、統計が動く', () => {
     const gfx = makeFakeGfx();
@@ -125,7 +98,7 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
     gfx.camera.lookAt(0, 0, 0);
     gfx.camera.updateMatrixWorld(true);   // ブラウザではrenderer.renderが行う行列更新
     let now = 0;
-    for (let i = 0; i < 10; i++) { now += 16; step(world, 0.016, now); }
+    for (let i = 0; i < 10; i++) { now += 16; stepSim(world, 0.016, now); }
 
     // 画面中央へ爆撃指定 → ミサイルが生まれる
     requestStrike(world, 640, 360);
@@ -133,7 +106,7 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
     expect(world.sim.stats.mCount).toBe(1);
 
     // 着弾まで進める(最長10秒ぶん)
-    for (let i = 0; i < 600 && world.sim.missiles.length; i++) { now += 16; step(world, 0.016, now); }
+    for (let i = 0; i < 600 && world.sim.missiles.length; i++) { now += 16; stepSim(world, 0.016, now); }
     expect(world.sim.missiles.length).toBe(0);
 
     // 建物密集地の中心に直接起爆して破壊を確認
@@ -143,13 +116,13 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
     expect(world.sim.stats.bDead).toBeGreaterThan(before);
     expect(world.sim.stats.damage).toBeGreaterThan(0);
     // 崩壊が完了するまで回す → 対象の建物が死んでいる
-    for (let i = 0; i < 600 && world.sim.collapsing.length; i++) { now += 16; step(world, 0.016, now); }
+    for (let i = 0; i < 600 && world.sim.collapsing.length; i++) { now += 16; stepSim(world, 0.016, now); }
     expect(world.sim.collapsing.length).toBe(0);
     expect(target.state === B.Dead || target.state === B.Burning).toBe(true);
 
     // 戦術核
     detonateNuke(world, { x: 0, y: world.city.terrain.h(0, 0), z: 0 });
-    for (let i = 0; i < 200; i++) { now += 16; step(world, 0.016, now); }
+    for (let i = 0; i < 200; i++) { now += 16; stepSim(world, 0.016, now); }
     expect(world.sim.stats.bDead).toBeGreaterThan(10);
 
     // 時間帯トグル
@@ -167,9 +140,9 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
     for (const L of gfx.boomLights) expect(L.intensity).toBe(0);
 
     // 再生成後も普通に遊べる
-    for (let i = 0; i < 10; i++) { now += 16; step(world, 0.016, now); }
+    for (let i = 0; i < 10; i++) { now += 16; stepSim(world, 0.016, now); }
     detonate(world, { x: 0, y: world.city.terrain.h(0, 0), z: 0 });
-    for (let i = 0; i < 120; i++) { now += 16; step(world, 0.016, now); }
+    for (let i = 0; i < 120; i++) { now += 16; stepSim(world, 0.016, now); }
     expect(world.sim.stats.damage).toBeGreaterThanOrEqual(0);
   }, 60000);
 });

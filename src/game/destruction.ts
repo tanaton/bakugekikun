@@ -3,7 +3,7 @@
 import type * as THREE from 'three';
 import { CAR_VALUE } from '../core/config';
 import { B, type Building, type Car } from '../core/types';
-import { FALLEN_COL, hideCarInstance, setBuildingMatrix, toppleMatrix } from '../render/cityMeshes';
+import { FALLEN_COL, hideCarInstance, setBuildingLit, setBuildingMatrix, toppleMatrix } from '../render/cityMeshes';
 import { HIDDEN_MAT } from '../render/instanced';
 import { playPop } from '../ui/audio';
 import type { World } from './world';
@@ -13,6 +13,7 @@ export function startCollapse(world: World, b: Building,
     dirx: number, dirz: number, canTopple: boolean, delay = 0): void {
   const { sim } = world;
   b.state = B.Falling;
+  setBuildingLit(world.view, b, false);   // 崩壊する建物は停電(倒壊後も窓が光り続けない)
   sim.stats.bDead++;
   sim.stats.damage += b.value;
   const base = { b, t: 0, delay, dusted: false };
@@ -36,7 +37,9 @@ export function destroyAround(world: World, p: { x: number; z: number }, R: numb
   const { sim, index, view, city } = world;
   // 建物(空間ハッシュで近傍のみ走査。距離は二乗で比較し、命中時だけsqrtを取る)
   const R2 = R * 1.55, Rsq = R * R, R2sq = R2 * R2, REsq = R2sq * 1.35 * 1.35;
-  index.buildings.forEachNear(p.x, p.z, R2, b => {
+  // クエリ半径は最大の判定半径(延焼チェックの外縁R2*1.35)に合わせる。
+  // 巻き添え崩壊(depth>0)は延焼しないのでR2まででよい
+  index.buildings.forEachNear(p.x, p.z, depth === 0 ? R2 * 1.35 : R2, b => {
     if (b.state !== B.Intact && b.state !== B.Burning) return;   // 延焼中は直撃なら壊せる
     const dx = b.x - p.x, dz = b.z - p.z, d2 = dx * dx + dz * dz;
     if (d2 <= Rsq || (d2 <= R2sq && Math.random() < 0.45)) {

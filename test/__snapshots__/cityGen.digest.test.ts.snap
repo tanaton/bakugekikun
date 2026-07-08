@@ -19,7 +19,7 @@ exports[`generateCityData ダイジェスト > シード BAKUGEKI-01 のダイ�
     "groundPolys": 3816251943,
     "lotDecals": 2203953714,
     "roadPaths": 3037150996,
-    "trees": 2531890689,
+    "trees": 3556365680,
   },
   "plan": "grid",
 }
@@ -44,7 +44,7 @@ exports[`generateCityData ダイジェスト > シード CITY-00001 のダイジ
     "groundPolys": 1136978912,
     "lotDecals": 4247033593,
     "roadPaths": 2154334151,
-    "trees": 189543906,
+    "trees": 2007008003,
   },
   "plan": "radial",
 }
@@ -69,7 +69,7 @@ exports[`generateCityData ダイジェスト > シード CITY-31337 のダイジ
     "groundPolys": 4025446591,
     "lotDecals": 606625417,
     "roadPaths": 3743630035,
-    "trees": 2623930321,
+    "trees": 1750860237,
   },
   "plan": "radial",
 }
@@ -94,7 +94,7 @@ exports[`generateCityData ダイジェスト > シード TOKYO のダイジェ�
     "groundPolys": 251274756,
     "lotDecals": 424068519,
     "roadPaths": 3028709249,
-    "trees": 2176056482,
+    "trees": 661295103,
   },
   "plan": "organic",
 }
@@ -119,7 +119,7 @@ exports[`generateCityData ダイジェスト > シード niigata のダイジェ
     "groundPolys": 1532085415,
     "lotDecals": 2676117136,
     "roadPaths": 1049676647,
-    "trees": 119914248,
+    "trees": 3814626450,
   },
   "plan": "organic",
 }
@@ -144,7 +144,7 @@ exports[`generateCityData ダイジェスト > シード ながいシード文�
     "groundPolys": 1371692112,
     "lotDecals": 880672019,
     "roadPaths": 655444333,
-    "trees": 416159173,
+    "trees": 1425638201,
   },
   "plan": "radial",
 }

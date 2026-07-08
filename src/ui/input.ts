@@ -26,6 +26,8 @@ export function createInput(canvas: HTMLCanvasElement,
     if ((e.target as HTMLElement).tagName !== 'INPUT') keys[e.code] = true;
   });
   addEventListener('keyup', e => { keys[e.code] = false; });
+  // フォーカスを失うとkeyupが届かず押しっぱなしになるため、全キーを解除する
+  addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
   let dragging = false, lastX = 0, lastY = 0;
   canvas.addEventListener('pointerdown', e => {

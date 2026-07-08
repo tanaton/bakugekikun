@@ -110,9 +110,15 @@ export function updateMissiles(world: World, dt: number, now: number): void {
       const n = 7 + Math.floor(Math.random() * 3);
       for (let j = 0; j < n; j++) {
         const a = Math.random() * Math.PI * 2, rr = 25 + Math.random() * 150;
-        const tx = THREE.MathUtils.clamp(m.target.x + Math.cos(a) * rr, -MAP_HALF, MAP_HALF);
-        const tz = THREE.MathUtils.clamp(m.target.z + Math.sin(a) * rr, -MAP_HALF, MAP_HALF);
-        const ty = city.terrain.h(tx, tz);
+        let tx = THREE.MathUtils.clamp(m.target.x + Math.cos(a) * rr, -MAP_HALF, MAP_HALF);
+        let tz = THREE.MathUtils.clamp(m.target.z + Math.sin(a) * rr, -MAP_HALF, MAP_HALF);
+        let ty = city.terrain.h(tx, tz);
+        // 散布先が分裂点より高い(山腹など)と生成直後に着弾条件を満たしてしまうため、
+        // 十分低い地点になるまで親目標側へ引き戻す
+        for (let k = 0; ty > m.pos.y - 100 && k < 4; k++) {
+          tx = (tx + m.target.x) / 2; tz = (tz + m.target.z) / 2;
+          ty = city.terrain.h(tx, tz);
+        }
         const sm = new THREE.Mesh(gfx.fx.missileGeo, gfx.fx.missileMat);
         sm.scale.set(0.5, 0.5, 0.5);
         const vel = new THREE.Vector3(tx - m.pos.x, ty - m.pos.y, tz - m.pos.z).normalize().multiplyScalar(560);

@@ -20,7 +20,12 @@ export function makeLightPool(scene: THREE.Scene, n: number, color: number, dist
 
 // プールから空きライトを取って点灯する(空きがなければ最古を上書き)
 export function fireLight(pool: THREE.PointLight[], x: number, y: number, z: number, peak: number): void {
-  const L = pool.find(l => l.intensity <= 0.05) || pool[0];
+  let L = pool[0], oldest = -1;
+  for (const l of pool) {
+    if (l.intensity <= 0.05) { L = l; break; }
+    const age = (l.userData as LightState).age;
+    if (age > oldest) { oldest = age; L = l; }
+  }
   L.position.set(x, y, z);
   L.userData = { peak: peak * LIGHT_SCALE, age: 0 } satisfies LightState;
   L.intensity = peak * LIGHT_SCALE;

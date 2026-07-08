@@ -3,23 +3,24 @@
 import * as THREE from 'three';
 import type { CityData } from '../core/cityGen';
 import { MAP_HALF } from '../core/config';
+import { rngFor, type Rng } from '../core/rng';
 import { bandPt, shorePts } from '../core/terrain';
 import { makeCanvas } from './canvas2d';
 import type { GroundPalette } from './sky';
 
 export interface WaterView { mat: THREE.MeshPhongMaterial; tex: THREE.CanvasTexture }
 
-// タイル可能なさざ波テクスチャ(演出なので Math.random でよい)
-function makeWaterTexture(): THREE.CanvasTexture {
+// タイル可能なさざ波テクスチャ(街の生成物なのでシード付きストリームで再現可能にする)
+function makeWaterTexture(rng: Rng): THREE.CanvasTexture {
   const { canvas: c, ctx: x } = makeCanvas(256);
   x.fillStyle = '#c8c8c8'; x.fillRect(0, 0, 256, 256);
   for (let i = 0; i < 220; i++) {
-    const cx = Math.random() * 256, cy = Math.random() * 256;
-    const w = 16 + Math.random() * 46, h = 2 + Math.random() * 5;
-    const rot = (Math.random() - 0.5) * 0.5;
-    const style = Math.random() < 0.5
-      ? `rgba(255,255,255,${(0.05 + Math.random() * 0.10).toFixed(3)})`
-      : `rgba(60,72,84,${(0.04 + Math.random() * 0.08).toFixed(3)})`;
+    const cx = rng() * 256, cy = rng() * 256;
+    const w = 16 + rng() * 46, h = 2 + rng() * 5;
+    const rot = (rng() - 0.5) * 0.5;
+    const style = rng() < 0.5
+      ? `rgba(255,255,255,${(0.05 + rng() * 0.10).toFixed(3)})`
+      : `rgba(60,72,84,${(0.04 + rng() * 0.08).toFixed(3)})`;
     // 3x3で同じ筋を描き、タイル境界を継ぎ目なしにする
     for (const dx of [-256, 0, 256]) for (const dy of [-256, 0, 256]) {
       x.save();
@@ -39,7 +40,7 @@ function makeWaterTexture(): THREE.CanvasTexture {
 export function buildWaterSurface(city: CityData, group: THREE.Group, G: GroundPalette): WaterView | null {
   const feats = city.terrain.feats.filter(f => f.type === 'r');
   if (!feats.length) return null;
-  const tex = makeWaterTexture();
+  const tex = makeWaterTexture(rngFor(city.seed, 'waterTex'));
   tex.repeat.set(1 / 230, 1 / 230);
   // Phong+バンプで太陽のスペキュラをさざ波に沿ってきらめかせる(バンプはさざ波テクスチャを共用)
   const mat = new THREE.MeshPhongMaterial({

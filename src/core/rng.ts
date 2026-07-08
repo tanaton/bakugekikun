@@ -26,7 +26,7 @@ export function mulberry32(a: number): Rng {
 // ストリーム名の全リストはここが唯一の登録簿(名前の衝突・typoを型エラーにする)
 export const STREAMS = [
   'features', 'terrain', 'plan', 'lots', 'cars', 'trees',   // core: 街の決定性を構成する
-  'facadeTex', 'groundNoise',                               // render: 見た目のみ(街レイアウト非依存)
+  'facadeTex', 'groundNoise', 'waterTex',                   // render: 見た目のみ(街レイアウト非依存)
 ] as const;
 export type StreamName = (typeof STREAMS)[number];
 

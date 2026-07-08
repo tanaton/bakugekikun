@@ -1,6 +1,7 @@
 // 道路パス(任意形状の道路をポリラインで統一的に扱う)
 
 import { MAP_HALF, ROAD_STEP } from './config';
+import { clamp } from './math';
 import type { Rng } from './rng';
 import type { Terrain } from './terrain';
 import type { AlleyPath, RoadPath, RoadPt, Vec2 } from './types';
@@ -26,6 +27,12 @@ export function resamplePath(raw: Vec2[], loop: boolean): RoadPt[] {
     acc += segLen;
     prev = cur;
   }
+  // ループで終点が始点にちょうど重なった場合は重複点を落とす
+  // (閉路の末尾→先頭の区間はcarPoseが補間する)
+  if (loop && pts.length > 1) {
+    const lastP = pts[pts.length - 1];
+    if (Math.hypot(lastP.x - raw[0].x, lastP.z - raw[0].z) < 1e-6) pts.pop();
+  }
   return pts;
 }
 
@@ -35,11 +42,17 @@ export interface CarPose { x: number; z: number; dx: number; dz: number; h: numb
 const _pose: CarPose = { x: 0, z: 0, dx: 0, dz: 0, h: 0, hs: 0 };
 export function carPose(road: RoadPath, s: number): CarPose {
   const n = road.pts.length;
-  const maxS = (n - 1) * ROAD_STEP;
-  s = ((s % maxS) + maxS) % maxS;
-  const i = Math.min(n - 2, Math.floor(s / ROAD_STEP));
+  // 環状路は末尾→先頭の閉路区間(1ステップ扱い)も含めて周回し、
+  // 非環状路(行き止まり)は端でクランプして反対端へワープさせない
+  if (road.loop) {
+    const total = n * ROAD_STEP;
+    s = ((s % total) + total) % total;
+  } else {
+    s = clamp(s, 0, (n - 1) * ROAD_STEP);
+  }
+  const i = Math.min(n - 1, Math.floor(s / ROAD_STEP));
   const f = s / ROAD_STEP - i;
-  const a = road.pts[i], b = road.pts[i + 1];
+  const a = road.pts[i], b = road.pts[(i + 1) % n];
   _pose.x = a.x + (b.x - a.x) * f; _pose.z = a.z + (b.z - a.z) * f;
   _pose.dx = a.dx; _pose.dz = a.dz;
   _pose.h = a.h + (b.h - a.h) * f; _pose.hs = a.hs + (b.hs - a.hs) * f;

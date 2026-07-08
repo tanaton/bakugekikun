@@ -36,7 +36,7 @@ describe('resamplePath', () => {
 });
 
 describe('carPose', () => {
-  it('区間内を線形補間し、sは総延長でラップする', () => {
+  it('区間内を線形補間し、非環状路(行き止まり)は端でクランプする', () => {
     const rp: RoadPath = {
       pts: resamplePath([{ x: 0, z: 0 }, { x: 100, z: 0 }], false),
       w: 18, major: false, loop: false,
@@ -47,11 +47,30 @@ describe('carPose', () => {
     const p1 = carPose(rp, 30);
     expect(p1.x).toBeCloseTo(30, 6);
     expect(p1.z).toBeCloseTo(0, 6);
-    const x1 = carPose(rp, 10).x;
-    const x2 = carPose(rp, 10 + maxS).x;   // 一周ぶん足しても同じ位置
-    expect(x2).toBeCloseTo(x1, 6);
-    const xm = carPose(rp, -10).x;          // 負のsもラップ
-    expect(xm).toBeCloseTo(maxS - 10, 6);
+    // 端を越えても反対端へワープしない
+    expect(carPose(rp, maxS + 10).x).toBeCloseTo(maxS, 6);
+    expect(carPose(rp, -10).x).toBeCloseTo(0, 6);
+  });
+
+  it('環状路は末尾→先頭の閉路区間も補間しながら周回する', () => {
+    const raw: Vec2[] = [
+      { x: 0, z: 0 }, { x: 200, z: 0 }, { x: 200, z: 200 }, { x: 0, z: 200 },
+    ];
+    const rp: RoadPath = { pts: resamplePath(raw, true), w: 18, major: true, loop: true };
+    const terrain = mkTerrain('CARPOSE-LOOP');
+    bakeRoadHeights([rp], terrain);
+    const n = rp.pts.length;
+    const total = n * ROAD_STEP;
+    const p1 = carPose(rp, 30);
+    const x1 = p1.x, z1 = p1.z;      // carPoseの戻り値は共有スクラッチなので値を控える
+    const p2 = carPose(rp, 30 + total);   // 一周ぶん足しても同じ位置
+    expect(p2.x).toBeCloseTo(x1, 6);
+    expect(p2.z).toBeCloseTo(z1, 6);
+    // 閉路区間(末尾の点以降)は先頭の点へ向かって補間される(ワープしない)
+    const last = rp.pts[n - 1], first = rp.pts[0];
+    const pc = carPose(rp, (n - 1) * ROAD_STEP + ROAD_STEP / 2);
+    expect(pc.x).toBeCloseTo((last.x + first.x) / 2, 6);
+    expect(pc.z).toBeCloseTo((last.z + first.z) / 2, 6);
   });
 
   it('bakeRoadHeightsが正規化済み進行方向と路面高を埋める', () => {

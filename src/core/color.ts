@@ -46,6 +46,27 @@ export function offsetHSL(c: RGB, dh: number, ds: number, dl: number): RGB {
   return { r: hue2rgb(p, q, h + 1 / 3), g: hue2rgb(p, q, h), b: hue2rgb(p, q, h - 1 / 3) };
 }
 
+// h,s,lからRGBを作る(THREE.Color#setHSL相当)
+export function hslToRgb(h: number, s: number, l: number): RGB {
+  h = euclideanModulo(h, 1);
+  s = clamp(s, 0, 1);
+  l = clamp(l, 0, 1);
+  if (s === 0) return { r: l, g: l, b: l };
+  const q = l <= 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return { r: hue2rgb(p, q, h + 1 / 3), g: hue2rgb(p, q, h), b: hue2rgb(p, q, h - 1 / 3) };
+}
+
+// HDR乗算色(成分が1を超える色)の色相・輝度ジッタ。
+// offsetHSLはl>1の色を無彩色に潰してしまうため、
+// 色味(最大成分=1に正規化)と輝度スケールに分けてジッタし、掛け戻す
+export function jitterHdr(c: RGB, dh: number, dl: number): RGB {
+  const m = Math.max(c.r, c.g, c.b);
+  const n = offsetHSL({ r: c.r / m, g: c.g / m, b: c.b / m }, dh, 0, 0);
+  const k = m * (1 + dl);
+  return { r: n.r * k, g: n.g * k, b: n.b * k };
+}
+
 // パレットから1色選び、色相dh・明度dlの幅でジッタをかける(dh=0なら色相のrngは消費しない)
 export function palColor(pal: readonly number[], rng: Rng, dh: number, dl: number): RGB {
   return offsetHSL(hexToRgb(pick(pal, rng)), dh ? (rng() - 0.5) * dh : 0, 0, (rng() - 0.5) * dl);

@@ -5,7 +5,7 @@
 // 変えても建物や道路の配置は変わらない。
 
 import { N_CARS, PLACE_FOREST, PLACE_TREE, ROAD_STEP, inMap } from './config';
-import { offsetHSL } from './color';
+import { hslToRgb, jitterHdr } from './color';
 import { addBuildingLot, BUILDING_KINDS, lotToWorld, pushTree, type GenCity } from './lots';
 import { bakeRoadHeights, carPose, cullMountainAlleys, cullMountainRoads, RoadMask } from './roads';
 import { genGridPlan, genRadialPlan } from './plans';
@@ -164,10 +164,14 @@ export function generateCityData(seed: string): CityData {
       const a = treesRng();
       const base = a < 0.4 ? { r: 1.9, g: 1.0, b: 0.35 }
         : a < 0.75 ? { r: 2.0, g: 0.72, b: 0.30 } : { r: 1.75, g: 0.5, b: 0.32 };
-      t.color = offsetHSL(base, (treesRng() - 0.5) * 0.04, 0, (treesRng() - 0.5) * 0.1);
+      t.color = jitterHdr(base, (treesRng() - 0.5) * 0.04, (treesRng() - 0.5) * 0.1);
     } else {
-      t.color = offsetHSL({ r: 1, g: 1, b: 1 },
-        (treesRng() - 0.5) * 0.09, (treesRng() - 0.5) * 0.25, (treesRng() - 0.5) * 0.14 - 0.02);
+      // 白(=無変化)はoffsetHSLだと色相・彩度が乗らないため、白→純色のティントで
+      // 色味を作り、明度は全体スケールで振る(1を超える個体はHDR的に明るくなる)
+      const tint = hslToRgb((treesRng() - 0.5) * 0.09, 1,
+        1 - Math.max(0, (treesRng() - 0.5) * 0.25) / 2);
+      const k = 1 + (treesRng() - 0.5) * 0.14 - 0.02;
+      t.color = { r: tint.r * k, g: tint.g * k, b: tint.b * k };
     }
   }
 

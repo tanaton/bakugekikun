@@ -11,6 +11,7 @@
 | 左ドラッグ | 視点回転 |
 | ホイール | ズーム |
 | 右クリック | 爆撃地点を指定 |
+| P | 処理時間プロファイラ |
 
 - **シード**: 同じシードなら道路・ビル・地形の起伏まで同じ街が再現される
 - **時間帯**: 昼 / 夕暮れを切り替え(窓明かり・爆発光は夕暮れが映える)
@@ -19,21 +20,29 @@
 - 爆風外縁のビルは炎上し、時間差で崩壊する
 - 右上パネルに破壊建物数・破壊車両数・被害総額を表示
 
+## 開発
+
+TypeScript 7 (RC) + Three.js (r185, npm) + Vite 8。Node.js 20.19以上(22.12+推奨)。
+
+```
+npm ci            # 依存のインストール
+npm run dev       # 開発サーバー(HMR付き)
+npm run build     # 型チェック + 単一HTMLビルド → bakugekikun.html
+npm test          # 単体テスト(Vitest / node環境)
+```
+
+ビルドは `vite-plugin-singlefile` でJS/CSSをすべてインライン化し、
+`dist/index.html` を配布物 `bakugekikun.html` にコピーする。外部CDNには依存しない。
+
 ## ファイル構成
 
 ```
-src/hud.html       HUD(CSS + DOM)と <script> 開始タグまで
-vendor/three.min.js  Three.js r147(UMDビルド)
-src/game.html      ゲーム本体のJS(地形・街生成・破壊・エフェクト)
-bakugekikun.html   上記3つを結合した配布物(ビルド生成物)
+index.html      HUDのDOM(ビルド時にJS/CSSがインライン化される)
+src/main.ts     起動配線
+src/core/       純粋層: シード付き街生成の全ロジック(three/DOM非依存・単体テスト対象)
+src/render/     Three.js依存: シーン・InstancedMesh・テクスチャ・常設プール
+src/game/       ゲームプレイ: World・ミサイル・爆発・破壊・車
+src/ui/         HUD・入力・サウンド・プロファイラ
+test/           決定性・不変条件・ダイジェスト凍結・統合スモーク
+bakugekikun.html 配布物(ビルド生成物。直接編集しない)
 ```
-
-## ビルド
-
-`src/` か `vendor/` を編集したら結合し直す:
-
-```powershell
-./build.ps1
-```
-
-(実体は3ファイルの単純な連結。bash なら `cat src/hud.html vendor/three.min.js src/game.html > bakugekikun.html`)

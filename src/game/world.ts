@@ -76,6 +76,7 @@ export function regenerate(world: World, seed: string): void {
   world.city = generateCityData(seed);
   world.index = buildCityIndex(world.city);
   world.view = buildCityView(world.gfx.scene, world.city, world.settings.timeMode);
+  world.gfx.sunShadow.markFarDirty();   // 新しい街を全域シャドウマップへ焼き直す
   setTotals(world);
 }
 
@@ -90,8 +91,7 @@ export function applyTime(world: World, mode: TimeMode): void {
   hemi.color.setHex(T.hemiSky); hemi.groundColor.setHex(T.hemiGnd);
   hemi.intensity = T.hemiInt * LIGHT_SCALE;
   sun.color.setHex(T.sunCol); sun.intensity = T.sunInt * LIGHT_SCALE;
-  // 太陽角度の変更は次フレームのsunShadow.updateで影の向きにも反映される
-  sunShadow.sunOff.set(...T.sunPos);
+  sunShadow.setSunOffset(T.sunPos);   // 影の向きは次フレームのupdateで反映される
   for (const m of world.view.emissiveMats) {
     m.emissiveIntensity = T.emissive * ((m.userData.eScale as number) || 1);
   }

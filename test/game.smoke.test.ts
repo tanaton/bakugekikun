@@ -49,7 +49,7 @@ const elements = new Map<string, any>();
 const { ParticlePool } = await import('../src/render/particles');
 const { FxPools } = await import('../src/render/fxPool');
 const { makeLightPool } = await import('../src/render/lightPool');
-const { SunShadow } = await import('../src/render/sky');
+const { mkSunRig } = await import('./helpers');
 const { applyTime, createWorld, regenerate } = await import('../src/game/world');
 const { detonate, detonateNuke } = await import('../src/game/explosions');
 const { requestStrike } = await import('../src/game/missiles');
@@ -62,18 +62,14 @@ function makeFakeGfx(): Gfx {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x8ec4f0);
   scene.fog = new THREE.Fog(0x8ec4f0, 1600, 9000);
-  const camera = new THREE.PerspectiveCamera(55, 16 / 9, 2, 14000);
   const hemi = new THREE.HemisphereLight(0xbdd5ee, 0x8a8578, 1);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xfff1d6, 1);
-  sun.position.set(-900, 2000, 700);
-  scene.add(sun);
-  scene.add(sun.target);
+  const { sun, camera, sunShadow } = mkSunRig(scene);
   return {
     canvas: null as unknown as HTMLCanvasElement,
     renderer: null as unknown as THREE.WebGLRenderer,
     scene, camera, hemi, sun,
-    sunShadow: new SunShadow(sun, camera),
+    sunShadow,
     fireP: new ParticlePool(5200, THREE.AdditiveBlending, scene),
     smokeP: new ParticlePool(4600, THREE.NormalBlending, scene),
     boomLights: makeLightPool(scene, 6, 0xffa050, 1000),

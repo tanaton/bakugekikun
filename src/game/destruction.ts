@@ -84,6 +84,7 @@ export function destroyAround(world: World, p: { x: number; z: number }, R: numb
     }
   });
   for (const m of _treeHit) m.instanceMatrix.needsUpdate = true;
+  if (_treeHit.size) world.gfx.sunShadow.markFarDirty();   // 消えた木を全域シャドウマップにも反映
 }
 
 const touched = new Set<number>();   // 行列を書き換えたメッシュ種別だけGPUへ再アップロード
@@ -150,6 +151,7 @@ export function updateCollapses(world: World, dt: number): void {
     }
   }
   for (const k of touched) view.bMeshes[k].instanceMatrix.needsUpdate = true;
+  if (touched.size) gfx.sunShadow.markFarDirty();   // 崩壊中の建物を全域シャドウマップにも反映
 }
 
 // 崩壊開始時の粉塵

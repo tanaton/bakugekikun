@@ -29,7 +29,7 @@ export function createGfx(canvas: HTMLCanvasElement): Gfx {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;   // r185でPCFSoftは廃止(指定しても警告つきでPCFに落ちる)
 
   // 初期状態は昼プリセット(値の二重管理を避けてTIMESを唯一の定義にする。
   // Settingsの初期timeModeも'day'で、以後の切り替えはapplyTimeが同じTIMESを適用する)
@@ -45,9 +45,7 @@ export function createGfx(canvas: HTMLCanvasElement): Gfx {
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(T.sunCol, T.sunInt * LIGHT_SCALE);
   sun.position.set(...T.sunPos);
-  scene.add(sun);
-  scene.add(sun.target);
-  const sunShadow = new SunShadow(sun, camera);
+  const sunShadow = new SunShadow(scene, sun, camera);   // ライトのscene追加もSunShadowが行う
 
   return {
     canvas, renderer, scene, camera, hemi, sun, sunShadow,

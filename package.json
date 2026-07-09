@@ -5,7 +5,6 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "postbuild": "node -e \"const fs=require('fs');fs.copyFileSync('dist/index.html','bakugekikun.html');fs.mkdirSync('docs',{recursive:true});fs.copyFileSync('dist/index.html','docs/index.html')\"",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

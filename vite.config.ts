@@ -4,6 +4,7 @@ import { viteSingleFile } from 'vite-plugin-singlefile';
 export default defineConfig({
   plugins: [viteSingleFile()],
   build: {
+    outDir: 'docs',
     target: 'es2022',
     chunkSizeWarningLimit: 2000,
   },

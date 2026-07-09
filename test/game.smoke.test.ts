@@ -91,6 +91,15 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
     expect(world.view.carMesh.count).toBe(world.city.cars.length);
     expect(world.sim.stats.bTotal).toBe(world.city.buildings.length);
 
+    // 幹はインスタンス色(紅葉)を無視する: パッチ後の頂点シェーダーに乗算行がなく、
+    // チャンクの展開自体は行われている(置換の空振り検出)
+    const trunkMat = (world.view.treeChunks[0].material as THREE.Material[])[0];
+    const sh = { vertexShader: THREE.ShaderLib.lambert.vertexShader };
+    trunkMat.onBeforeCompile(sh as never, null as never);
+    expect(sh.vertexShader).not.toContain('instanceColor');
+    expect(sh.vertexShader).not.toContain('#include <color_vertex>');
+    expect(sh.vertexShader).toContain('vColor = vec4( 1.0 );');
+
     // カメラを構えて数フレーム回す(平常時)
     gfx.camera.position.set(400, 600, 400);
     gfx.camera.lookAt(0, 0, 0);

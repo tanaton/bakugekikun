@@ -79,9 +79,17 @@ const _color = new THREE.Color();
 //  スコープに置かない=街の生存期間中メモリに残さないため)
 // インスタンス色の乗算を外すシェーダーパッチ。
 // 個体差・紅葉の色はインスタンス色で葉に掛けるが、同じ色が幹にも掛かって
-// 紅葉の幹が赤くなってしまうため、幹のマテリアルはインスタンス色を無視する
+// 紅葉の幹が赤くなってしまうため、幹のマテリアルはインスタンス色を無視する。
+// onBeforeCompile時点のvertexShaderは#include展開前(展開はWebGLProgram内)なので、
+// 該当チャンクをここで手動展開してから乗算行を消す。threeの更新で原文が変わると
+// replaceが空振りするため、見つからなければthrowで気付く(dualShadowと同じ約束)
+const INSTANCE_COLOR_LINE = 'vColor.rgb *= instanceColor.rgb;';
 const ignoreInstanceColor = (sh: { vertexShader: string }): void => {
-  sh.vertexShader = sh.vertexShader.replace('vColor.rgb *= instanceColor.rgb;', '');
+  if (!THREE.ShaderChunk.color_vertex.includes(INSTANCE_COLOR_LINE)) {
+    throw new Error('ignoreInstanceColor: color_vertexに想定行がない(threeの更新でシェーダー原文が変わった)');
+  }
+  sh.vertexShader = sh.vertexShader.replace('#include <color_vertex>',
+    THREE.ShaderChunk.color_vertex.replace(INSTANCE_COLOR_LINE, ''));
 };
 
 function buildTreeChunks(city: CityData): THREE.InstancedMesh[] {

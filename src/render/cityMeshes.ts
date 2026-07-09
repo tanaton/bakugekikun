@@ -9,8 +9,8 @@ import { rngFor } from '../core/rng';
 import type { Building } from '../core/types';
 import { makeHouseGeometry, makeTowerGeometry, makeTreeGeometries } from './geometries';
 import { GroundView } from './ground';
-import { forEachMaterial, HIDDEN_MAT, instanceDummy, setInstanceAt } from './instanced';
-import { TIMES, type TimeMode } from './sky';
+import { flushRange, forEachMaterial, HIDDEN_MAT, instanceDummy, setInstanceAt } from './instanced';
+import { excludeFromFarShadow, TIMES, type TimeMode } from './sky';
 import { makeConcreteTexture, makeGlassTexture, makeHouseTexture, type TexPair } from './textures';
 import { buildWaterSurface, type WaterView } from './water';
 
@@ -63,11 +63,11 @@ export function toppleMatrix(bMeshes: THREE.InstancedMesh[], b: Building,
   bMeshes[b.k].setMatrixAt(b.mi, _tm2);
 }
 
-// 車1台を画面外へ隠す。駐車車両(i >= movingCars)はupdateCarsの毎フレーム転送範囲外なので、
-// この行列変更だけ個別に転送予約する(走行/駐車の分割はこのモジュールが焼き込んだもの)
-export function hideCarInstance(view: CityView, movingCars: number, i: number): void {
+// 車1台を画面外へ隠す。updateCarsの毎フレーム転送は生存車両の範囲に絞られているため、
+// 走行/駐車を問わずこの行列変更は個別に転送予約する
+export function hideCarInstance(view: CityView, i: number): void {
   view.carMesh.setMatrixAt(i, HIDDEN_MAT);
-  if (i >= movingCars) view.carMesh.instanceMatrix.addUpdateRange(i * 16, 16);
+  flushRange(view.carMesh.instanceMatrix, i, i, 16);
 }
 
 const _color = new THREE.Color();
@@ -111,8 +111,8 @@ function buildTreeChunks(city: CityData): THREE.InstancedMesh[] {
   const chunkIndex = new Map<number, number>();   // キー → meshes内のインデックス
   for (const [ck, n] of chunkCount) {
     const ty = ck % TREE_TYPES;
+    // 行列は破壊時にしか変わらない(そのときも範囲転送)のでusageは既定のStaticのまま
     const m = new THREE.InstancedMesh(treeGeos[ty], [trunkMats[ty], leafMats[ty]], n);
-    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     chunkIndex.set(ck, meshes.length);
     meshes.push(m);
   }
@@ -234,6 +234,7 @@ export function buildCityView(scene: THREE.Scene, city: CityData, timeMode: Time
   }
   carMesh.instanceColor!.needsUpdate = true;
   carMesh.castShadow = carMesh.receiveShadow = true;
+  excludeFromFarShadow(carMesh);   // 全域マップには写らない(テクセルに埋もれる)ので描かない
   group.add(carMesh);
 
   // --- 木 ---

@@ -1,6 +1,7 @@
 // HUDのDOM操作(統計表示・ラベル・ヒント・核閃光)
 
 import type { CityPlanKind } from '../core/types';
+import type { ShadowMode } from '../render/gfx';
 import type { TimeMode } from '../render/sky';
 
 export const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -58,8 +59,8 @@ export function setTimeLabel(mode: TimeMode): void {
   $('timeBtn').textContent = mode === 'day' ? '時間帯: 昼' : '時間帯: 夕暮れ';
 }
 
-export function setShadowLabel(on: boolean): void {
-  $('shadowBtn').textContent = on ? '影: ON' : '影: OFF';
+export function setShadowLabel(mode: ShadowMode): void {
+  $('shadowBtn').textContent = { high: '影: 高', low: '影: 低', off: '影: OFF' }[mode];
 }
 
 export function setSoundLabel(on: boolean): void {

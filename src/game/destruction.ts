@@ -1,10 +1,9 @@
 // 破壊判定と崩壊(倒壊・圧壊)・炎上の進行
 
-import type * as THREE from 'three';
 import { CAR_VALUE } from '../core/config';
 import { B, type Building, type Car } from '../core/types';
 import { FALLEN_COL, hideCarInstance, setBuildingLit, setBuildingMatrix, toppleMatrix } from '../render/cityMeshes';
-import { HIDDEN_MAT } from '../render/instanced';
+import { DirtyRanges, flushRange, HIDDEN_MAT } from '../render/instanced';
 import { playPop } from '../ui/audio';
 import type { World } from './world';
 
@@ -31,7 +30,8 @@ export function startCollapse(world: World, b: Building,
   }
 }
 
-const _treeHit = new Set<THREE.InstancedMesh>();   // 行列を書き換えたチャンクメッシュだけGPUへ再アップロード
+// 行列を書き換えたチャンク(キーはt.ci)のmi範囲。チャンク全体でなく書き換えた範囲だけGPUへ転送する
+const _treeHit = new DirtyRanges();
 export function destroyAround(world: World, p: { x: number; z: number }, R: number,
     depth = 0, wave = 0): void {
   const { sim, index, view, city } = world;
@@ -63,7 +63,7 @@ export function destroyAround(world: World, p: { x: number; z: number }, R: numb
     if (dx > CR || dx < -CR || dz > CR || dz < -CR) return;   // 軸別の早期棄却
     if (dx * dx + dz * dz > CRsq) return;
     c.alive = false;
-    hideCarInstance(view, city.movingCars, c.i);
+    hideCarInstance(view, c.i);
     sim.stats.cDead++;
     sim.stats.damage += CAR_VALUE;
   };
@@ -71,28 +71,26 @@ export function destroyAround(world: World, p: { x: number; z: number }, R: numb
   index.parked.forEachNear(p.x, p.z, CR, hitCar);
   // 木(空間ハッシュで近傍セルのみ走査)
   const TR = R * 1.2, TRsq = TR * TR;
-  _treeHit.clear();
   index.trees.forEachNear(p.x, p.z, TR, t => {
     if (!t.alive) return;
     const dx = t.x - p.x, dz = t.z - p.z;
     if (dx * dx + dz * dz <= TRsq) {
       t.alive = false;
-      const mesh = view.treeChunks[t.ci];
-      mesh.setMatrixAt(t.mi, HIDDEN_MAT);
-      _treeHit.add(mesh);
+      view.treeChunks[t.ci].setMatrixAt(t.mi, HIDDEN_MAT);
+      _treeHit.add(t.ci, t.mi);
       sim.stats.tDead++;
     }
   });
-  for (const m of _treeHit) m.instanceMatrix.needsUpdate = true;
   if (_treeHit.size) world.gfx.sunShadow.markFarDirty();   // 消えた木を全域シャドウマップにも反映
+  _treeHit.flush(ci => view.treeChunks[ci].instanceMatrix, 16);
 }
 
-const touched = new Set<number>();   // 行列を書き換えたメッシュ種別だけGPUへ再アップロード
+// 行列を書き換えたメッシュ種別(キーはb.k)のmi範囲。種別の全棟でなく範囲だけGPUへ転送する
+const _bTouched = new DirtyRanges();
 export function updateCollapses(world: World, dt: number): void {
   const { sim, view, city, debris, gfx } = world;
   const collapsing = sim.collapsing;
   if (!collapsing.length) return;
-  touched.clear();
   for (let i = collapsing.length - 1; i >= 0; i--) {
     const c = collapsing[i];
     const b = c.b;
@@ -102,7 +100,7 @@ export function updateCollapses(world: World, dt: number): void {
       c.dusted = true;
       collapseDust(world, b);
     }
-    touched.add(b.k);
+    _bTouched.add(b.k, b.mi);
     c.t += dt / c.dur;
     if (c.mode === 't') {
       // 倒壊: 基部を支点に加速しながら傾く
@@ -111,7 +109,7 @@ export function updateCollapses(world: World, dt: number): void {
         b.state = B.Dead;
         const mesh = view.bMeshes[b.k];
         mesh.setColorAt(b.mi, FALLEN_COL);
-        mesh.instanceColor!.needsUpdate = true;
+        flushRange(mesh.instanceColor!, b.mi, b.mi, 3);
         view.ground.pushLot(b);   // 根本の基礎跡(焦げ跡の中では省略される)
         // 着地の粉塵が倒れた方向に走る
         for (let j = 0; j < 16; j++) {
@@ -150,8 +148,8 @@ export function updateCollapses(world: World, dt: number): void {
       setBuildingMatrix(view.bMeshes, b, Math.max(0.045, 1 - k * 0.96), c.ax * k + jitter, c.az * k + jitter);
     }
   }
-  for (const k of touched) view.bMeshes[k].instanceMatrix.needsUpdate = true;
-  if (touched.size) gfx.sunShadow.markFarDirty();   // 崩壊中の建物を全域シャドウマップにも反映
+  if (_bTouched.size) gfx.sunShadow.markFarDirty();   // 崩壊中の建物を全域シャドウマップにも反映
+  _bTouched.flush(k => view.bMeshes[k].instanceMatrix, 16);
 }
 
 // 崩壊開始時の粉塵

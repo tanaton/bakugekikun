@@ -55,6 +55,8 @@ const { detonate, detonateNuke } = await import('../src/game/explosions');
 const { requestStrike } = await import('../src/game/missiles');
 const { stepSim } = await import('../src/game/loop');
 const { B } = await import('../src/core/types');
+const { GROUND_TEX } = await import('../src/core/config');
+const { FLUSH_FULL_RATIO } = await import('../src/render/ground');
 import type { Gfx } from '../src/render/gfx';
 
 // WebGLRendererなしの偽Gfx(それ以外は本物)
@@ -140,5 +142,43 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
     detonate(world, { x: 0, y: world.city.terrain.h(0, 0), z: 0 });
     for (let i = 0; i < 120; i++) { now += 16; stepSim(world, 0.016, now); }
     expect(world.sim.stats.damage).toBeGreaterThanOrEqual(0);
+  }, 60000);
+
+  it('GPU転送が生存車両の範囲と地面のダーティ矩形に絞られる', () => {
+    const gfx = makeFakeGfx();
+    const world = createWorld(gfx, 'BAKUGEKI-02');
+    gfx.camera.position.set(400, 600, 400);
+    gfx.camera.lookAt(0, 0, 0);
+    gfx.camera.updateMatrixWorld(true);
+    let now = 0;
+
+    // 車: 全車生存なら走行車両の全域を転送し、全滅後は転送予約自体が出ない
+    const carAttr = world.view.carMesh.instanceMatrix;
+    carAttr.clearUpdateRanges();
+    now += 16; stepSim(world, 0.016, now);
+    expect(carAttr.updateRanges.pop()).toEqual({ start: 0, count: world.city.movingCars * 16 });
+    for (let i = 0; i < world.city.movingCars; i++) world.city.cars[i].alive = false;
+    carAttr.clearUpdateRanges();
+    now += 16; stepSim(world, 0.016, now);
+    expect(carAttr.updateRanges).toEqual([]);
+
+    // 地面: 破壊跡のフラッシュはダーティ矩形の部分コピーで、全量転送の面積しきい値未満
+    const copies: { box: THREE.Box2; pos: THREE.Vector2 }[] = [];
+    gfx.renderer = {
+      copyTextureToTexture: (_s: unknown, _d: unknown, box: THREE.Box2, pos: THREE.Vector2) => {
+        copies.push({ box: box.clone(), pos: pos.clone() });
+      },
+    } as unknown as THREE.WebGLRenderer;
+    const b = world.city.buildings[0];   // 陸上が保証された座標(水中は跡を残さない)
+    detonate(world, { x: b.x, y: b.gy, z: b.z }, 105);
+    now += 200; stepSim(world, 0.2, now);   // flushの間引き(0.15s)を跨いで焼き込ませる
+    expect(copies.length).toBe(1);
+    const { box, pos } = copies[0];
+    const w = box.max.x - box.min.x, h = box.max.y - box.min.y;
+    expect(w).toBeGreaterThan(0);
+    expect(h).toBeGreaterThan(0);
+    expect(w * h).toBeLessThan(GROUND_TEX * GROUND_TEX * FLUSH_FULL_RATIO);
+    expect(pos.x).toBe(box.min.x);
+    expect(pos.y).toBe(box.min.y);
   }, 60000);
 });

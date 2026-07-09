@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 import { MAP_HALF } from '../core/config';
+import type { Gfx } from '../render/gfx';
 import { hideHint } from '../ui/hud';
 import { playPop, playWhoosh } from '../ui/audio';
 import { detonate, detonateNuke } from './explosions';
@@ -24,6 +25,25 @@ function markerMatFor(w: Weapon): THREE.MeshBasicMaterial {
     markerMats.set(w.id, m);
   }
   return m;
+}
+
+// 遅延生成されるマテリアル(fxプリセット・マーカー・ミサイル)を起動時に一度コンパイルしておく。
+// 初回の発射・着弾の瞬間にDOUBLE_SIDED等の新プログラムのコンパイルストールが出るのを防ぐ
+// (ライトを常設してシェーダー再コンパイルを避けるのと同じ思想)
+export function prewarmShaders(gfx: Gfx): void {
+  const { scene, camera, renderer, fx } = gfx;
+  const fxMeshes = [
+    fx.sphereAdd(0xffffff, 1), fx.sphereAddD(0xffffff, 1),
+    fx.ringAddD(0xffffff, 1), fx.ringD(0xffffff, 1),
+  ];
+  const others = [
+    new THREE.Mesh(fx.missileGeo, fx.missileMat),
+    ...WEAPONS.map(w => new THREE.Mesh(fx.ringGeo, markerMatFor(w))),
+  ];
+  scene.add(...fxMeshes, ...others);
+  renderer.compile(scene, camera);   // fx以外の街のマテリアルもここでまとめてコンパイルされる
+  for (const m of fxMeshes) fx.release(m);
+  scene.remove(...others);
 }
 
 export function requestStrike(world: World, px: number, py: number): void {

@@ -30,7 +30,7 @@ export function stepSim(world: World, dt: number, now: number): void {
   updateBurningBldgs(world);     pt('brnBldgs');
   updateNukeEmitters(world, dt); pt('nukeEmit');
   updateCollapses(world, dt);
-  world.view.ground.flush(sim.simT, TIMES[world.settings.timeMode].ground);
+  world.view.ground.flush(gfx.renderer, sim.simT, TIMES[world.settings.timeMode].ground);
   pt('collapse');
   updateFx(world, dt);           pt('fx');
   world.debris.update(dt, world.city.terrain); pt('debris');

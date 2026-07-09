@@ -63,9 +63,16 @@ export function resizeGfx(gfx: Gfx): void {
   gfx.camera.updateProjectionMatrix();
 }
 
-// 影トグル。shadowMap.enabledの変更は全マテリアルにneedsUpdateを立てないと反映されず、
-// その再コンパイルで切替の瞬間だけスパイクが出る(ユーザー操作時のみなので許容)
-export function setShadowsEnabled(gfx: Gfx, on: boolean): void {
-  gfx.renderer.shadowMap.enabled = on;
-  gfx.scene.traverse(o => forEachMaterial(o, m => { m.needsUpdate = true; }));
+// 影品質(高=4096 / 低=2048 / OFF)。ON/OFFはshadowMap.enabledの変更で、全マテリアルに
+// needsUpdateを立てないと反映されず、その再コンパイルで切替の瞬間だけスパイクが出る
+// (ユーザー操作時のみなので許容)。高↔低は解像度の切り替えだけで再コンパイルは起きない
+export type ShadowMode = 'high' | 'low' | 'off';
+
+export function applyShadowMode(gfx: Gfx, mode: ShadowMode): void {
+  const on = mode !== 'off';
+  if (gfx.renderer.shadowMap.enabled !== on) {
+    gfx.renderer.shadowMap.enabled = on;
+    gfx.scene.traverse(o => forEachMaterial(o, m => { m.needsUpdate = true; }));
+  }
+  if (on) gfx.sunShadow.setResolution(mode === 'high' ? 1 : 0.5);
 }

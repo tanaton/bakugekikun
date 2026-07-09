@@ -6,6 +6,7 @@ import type { Terrain } from '../core/terrain';
 import { pick } from '../core/rng';
 import { SlotPool, type Slotted } from '../core/slotPool';
 import { HIDDEN_MAT, setInstanceAt } from '../render/instanced';
+import { excludeFromFarShadow } from '../render/sky';
 
 const DEBRIS_N = 340;
 const DEBRIS_COLS = [0x4a4a4e, 0x6a655c, 0x8a857a, 0x3a3d44, 0x7a5a48].map(c => new THREE.Color(c));
@@ -30,6 +31,7 @@ export class DebrisSystem {
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.frustumCulled = false;
     this.mesh.castShadow = true;
+    excludeFromFarShadow(this.mesh);   // 全域マップには写らない(テクセルに埋もれる)ので描かない
     scene.add(this.mesh);
     this.clear();
   }

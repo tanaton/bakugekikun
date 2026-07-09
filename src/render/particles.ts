@@ -2,6 +2,7 @@
 
 import * as THREE from 'three';
 import { SlotPool, type Slotted } from '../core/slotPool';
+import { flushRange } from './instanced';
 
 const P_VERT = `
   attribute float aSize; attribute float aAlpha; attribute vec3 aColor;
@@ -50,7 +51,8 @@ export class ParticlePool {
   private readonly sizeAttr: THREE.BufferAttribute;
   private readonly alphaAttr: THREE.BufferAttribute;
   readonly mesh: THREE.Points;
-  private colDirty = false;
+  private colLo = Infinity;   // spawnで色を書いたスロット範囲(色は寿命中不変なのでspawn分だけ転送する)
+  private colHi = -1;
 
   constructor(max: number, blending: THREE.Blending, scene: THREE.Scene) {
     this.max = max;
@@ -92,7 +94,8 @@ export class ParticlePool {
     this.pool.spawn(p);
     // 色は寿命を通じて不変なのでspawn時に1回だけ書く(毎フレームのバッファ転送を省く)
     this.col[p.slot * 3] = s.r; this.col[p.slot * 3 + 1] = s.g; this.col[p.slot * 3 + 2] = s.b;
-    this.colDirty = true;
+    if (p.slot < this.colLo) this.colLo = p.slot;
+    if (p.slot > this.colHi) this.colHi = p.slot;
   }
 
   update(dt: number): void {
@@ -118,11 +121,13 @@ export class ParticlePool {
       return true;
     });
     if (hi >= lo) {   // 書き換えたスロット範囲だけGPUへ転送する
-      this.posAttr.addUpdateRange(lo * 3, (hi - lo + 1) * 3);
-      this.sizeAttr.addUpdateRange(lo, hi - lo + 1);
-      this.alphaAttr.addUpdateRange(lo, hi - lo + 1);
-      this.posAttr.needsUpdate = this.sizeAttr.needsUpdate = this.alphaAttr.needsUpdate = true;
+      flushRange(this.posAttr, lo, hi, 3);
+      flushRange(this.sizeAttr, lo, hi, 1);
+      flushRange(this.alphaAttr, lo, hi, 1);
     }
-    if (this.colDirty) { this.colAttr.needsUpdate = true; this.colDirty = false; }
+    if (this.colHi >= 0) {
+      flushRange(this.colAttr, this.colLo, this.colHi, 3);
+      this.colLo = Infinity; this.colHi = -1;
+    }
   }
 }

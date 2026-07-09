@@ -28,3 +28,27 @@ export function forEachMaterial(o: THREE.Object3D, fn: (m: THREE.Material) => vo
   if (!mat) return;
   for (const m of Array.isArray(mat) ? mat : [mat]) fn(m);
 }
+
+// 書き換えたインデックス範囲[lo,hi]だけを属性の転送範囲に予約する
+// (strideは1インデックスあたりのfloat数: 行列16 / 色3 / スカラー1)
+export function flushRange(attr: THREE.BufferAttribute, lo: number, hi: number, stride: number): void {
+  attr.addUpdateRange(lo * stride, (hi - lo + 1) * stride);
+  attr.needsUpdate = true;
+}
+
+// キー(メッシュ配列の番号)ごとに書き換えたインデックス範囲を積み、flushでまとめて
+// 転送予約する。破壊処理のホットパスで使うためアロケーションしない
+export class DirtyRanges {
+  private readonly keys = new Set<number>();
+  private readonly lo: number[] = [];
+  private readonly hi: number[] = [];
+  get size(): number { return this.keys.size; }
+  add(k: number, i: number): void {
+    if (!this.keys.has(k)) { this.keys.add(k); this.lo[k] = i; this.hi[k] = i; }
+    else { if (i < this.lo[k]) this.lo[k] = i; if (i > this.hi[k]) this.hi[k] = i; }
+  }
+  flush(attrOf: (k: number) => THREE.BufferAttribute, stride: number): void {
+    for (const k of this.keys) flushRange(attrOf(k), this.lo[k], this.hi[k], stride);
+    this.keys.clear();
+  }
+}

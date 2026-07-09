@@ -3,10 +3,10 @@
 import './render/colorMode';   // 必ず最初(モジュール初期化時のColor構築より先)
 import './style.css';
 import { startLoop } from './game/loop';
-import { requestStrike } from './game/missiles';
+import { prewarmShaders, requestStrike } from './game/missiles';
 import { WEAPONS } from './game/weapons';
 import { applyTime, createWorld, regenerate } from './game/world';
-import { createGfx, resizeGfx, setShadowsEnabled } from './render/gfx';
+import { applyShadowMode, createGfx, resizeGfx, type ShadowMode } from './render/gfx';
 import { isSoundOn, toggleSound } from './ui/audio';
 import {
   $, setPlanName, setShadowLabel, setSoundLabel, setTimeLabel, setWeaponLabel, updateHUD,
@@ -44,9 +44,15 @@ $('timeBtn').addEventListener('click', () => {
   applyTime(world, mode);
   setTimeLabel(mode);
 });
+// 影品質はUIとgfxだけの関心事(simは読まない)なのでSettingsに持たずここで所有する。
+// 起動時にも一度applyして、createGfxの初期状態(影ON・高解像度)とラベルの一致を保証する
+let shadowMode: ShadowMode = 'high';
+applyShadowMode(gfx, shadowMode);
 $('shadowBtn').addEventListener('click', () => {
-  setShadowsEnabled(gfx, !gfx.renderer.shadowMap.enabled);
-  setShadowLabel(gfx.renderer.shadowMap.enabled);
+  const order: ShadowMode[] = ['high', 'low', 'off'];
+  shadowMode = order[(order.indexOf(shadowMode) + 1) % order.length];
+  applyShadowMode(gfx, shadowMode);
+  setShadowLabel(shadowMode);
 });
 $('weaponBtn').addEventListener('click', () => {
   world.settings.weaponIdx = (world.settings.weaponIdx + 1) % WEAPONS.length;
@@ -60,11 +66,12 @@ wireProfilerKey();
 
 // ボタンの初期ラベルはJS側の状態定義から入れる(HTMLとの文言二重管理を避ける)
 setTimeLabel(world.settings.timeMode);
-setShadowLabel(gfx.renderer.shadowMap.enabled);
+setShadowLabel(shadowMode);
 setSoundLabel(isSoundOn());
 const w0 = WEAPONS[world.settings.weaponIdx];
 setWeaponLabel(w0.label, w0.id === 'nuke');
 setPlanName(world.city.plan);
 updateHUD(world.sim.stats);
 
+prewarmShaders(gfx);   // 初回爆撃時のシェーダーコンパイルヒッチを起動時に済ませる
 startLoop(world, input);

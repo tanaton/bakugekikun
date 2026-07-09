@@ -23,6 +23,10 @@ const FOUNDATION_STYLE = 'rgba(24,22,19,0.85)';
 // canvasは生成のたびに作り直さず使い回す(モジュールレベルで常設)
 let gCanvas: HTMLCanvasElement | null = null;
 let gCtx: CanvasRenderingContext2D | null = null;
+// flushの部分転送(copyTextureToTexture)用にgCanvas全体を包むソーステクスチャ。
+// レンダラーで描画しない=GPUに載らないため、コピーはtexSubImage2Dのcanvas経路になり
+// UNPACK_SKIP_*でダーティ矩形だけがアップロードされる
+let gSrcTex: THREE.CanvasTexture | null = null;
 // 地肌の露出済み領域マスク。地肌は不透明で塗るが「先に露出した領域には上書きしない」
 // ことで、露出済みの上に溜まった焦げ跡を後発の爆発が塗り潰さないようにする。
 // drawGroundの全再描画時はクリアして時系列順に作り直す
@@ -36,7 +40,20 @@ function ensureCanvases(): void {
   ({ canvas: gCanvas, ctx: gCtx } = makeCanvas(GROUND_TEX));
   ({ canvas: dirtMask, ctx: dirtMaskCtx } = makeCanvas(GROUND_TEX));
   ({ canvas: dirtScratch, ctx: dirtScratchCtx } = makeCanvas(320));
+  gSrcTex = new THREE.CanvasTexture(gCanvas);
 }
+
+// スタンプが描き込む範囲の半径(テクスチャpx)。部分転送のダーティ矩形計算用
+const stampRadiusPx = (st: Stamp): number => 2 + GROUND_SCALE * (
+  st.kind === 'lot' ? Math.hypot(st.sx, st.sz) / 2
+  : st.kind === 'crater' ? st.r * 1.15   // blobの半径揺らぎ(最大1.12倍)ぶんの余白
+  : st.r);
+
+// ダーティ矩形がテクスチャ面積のこの割合を超えたら全量転送の方が安い(テストと共有)
+export const FLUSH_FULL_RATIO = 0.35;
+
+const _box = new THREE.Box2();
+const _dstPos = new THREE.Vector2();
 
 export class GroundView {
   readonly mesh: THREE.Mesh;
@@ -62,11 +79,16 @@ export class GroundView {
 
     this.tex = new THREE.CanvasTexture(gCanvas!);
     this.tex.anisotropy = 8;
+    // 部分転送(flush)でY反転とサブ矩形選択の相互作用に踏み込まないよう、テクスチャは
+    // 無反転で持ち、UVのV軸を反転して同じ見た目にする(canvas座標=テクスチャ座標になる)
+    this.tex.flipY = false;
     const geo = new THREE.PlaneGeometry(GROUND_WORLD, GROUND_WORLD, 96, 96);
     geo.rotateX(-Math.PI / 2);
     const gp = geo.getAttribute('position');
     for (let i = 0; i < gp.count; i++) gp.setY(i, city.terrain.h(gp.getX(i), gp.getZ(i)));
     geo.computeVertexNormals();
+    const uv = geo.getAttribute('uv');
+    for (let i = 0; i < uv.count; i++) uv.setY(i, 1 - uv.getY(i));
     this.mesh = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ map: this.tex }));
     // 影は受けるだけで落とさない。地形に影を落とさせると影テクセルが粗い遠景で
     // 山肌が自己影により一様に暗くなり、木の影だけ出ている山肌と食い違って不自然
@@ -162,13 +184,29 @@ export class GroundView {
     }
   }
 
-  // 新しく増えた跡だけをテクスチャへ差分追記する(drawGroundの全再描画は重い)
-  flush(simT: number, G: GroundPalette): void {
+  // 新しく増えた跡だけをテクスチャへ差分追記する(drawGroundの全再描画は重い)。
+  // GPUへも跡のダーティ矩形だけを部分転送し、毎回の全量(2048²≈16.8MB)アップロードを避ける。
+  // rendererなし(nodeテスト)や、離れた複数の跡で矩形が肥大したときは全量転送にフォールバック
+  flush(renderer: THREE.WebGLRenderer | null, simT: number, G: GroundPalette): void {
     if (this.drawn >= this.stamps.length || simT < this.flushAt) return;
     this.flushAt = simT + 0.15;
-    for (; this.drawn < this.stamps.length; this.drawn++)
-      this.drawStamp(gCtx!, G, this.stamps[this.drawn]);
-    this.tex.needsUpdate = true;
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+    for (; this.drawn < this.stamps.length; this.drawn++) {
+      const st = this.stamps[this.drawn];
+      this.drawStamp(gCtx!, G, st);
+      const px = worldToTex(st.x), pz = worldToTex(st.z), r = stampRadiusPx(st);
+      x0 = Math.min(x0, px - r); z0 = Math.min(z0, pz - r);
+      x1 = Math.max(x1, px + r); z1 = Math.max(z1, pz + r);
+    }
+    x0 = Math.max(0, Math.floor(x0)); z0 = Math.max(0, Math.floor(z0));
+    x1 = Math.min(GROUND_TEX, Math.ceil(x1)); z1 = Math.min(GROUND_TEX, Math.ceil(z1));
+    if (!renderer || x1 <= x0 || z1 <= z0 ||
+        (x1 - x0) * (z1 - z0) > GROUND_TEX * GROUND_TEX * FLUSH_FULL_RATIO) {
+      this.tex.needsUpdate = true;
+      return;
+    }
+    _box.min.set(x0, z0); _box.max.set(x1, z1);
+    renderer.copyTextureToTexture(gSrcTex!, this.tex, _box, _dstPos.set(x0, z0));
   }
 
   // 地面テクスチャの描画(時間帯トグルで呼び直す)

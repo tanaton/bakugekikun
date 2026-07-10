@@ -6,9 +6,10 @@
 // onBeforeCompile と違い、影を受ける全マテリアルに一括で効く。
 
 import * as THREE from 'three';
+import { replaceOrThrow } from './shaderPatch';
 
 // lights_fragment_begin 内の平行光源へ影を掛ける行(three r185 の原文)。
-// three の更新で原文が変わると replace が空振りするため、見つからなければ throw で気付く
+// 置換は replaceOrThrow で空振りを検知する
 export const DIR_LINE = 'directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowIntensity, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;';
 
 // 精細マップのUV範囲内はそれを使い、縁でフェードしながら全域マップへ切り替える。
@@ -42,10 +43,7 @@ const DUAL_LINE = `
 `;
 
 if (!THREE.ShaderChunk.shadowmap_pars_fragment.includes('bkDualShadow')) {   // 二重パッチ防止
-  if (!THREE.ShaderChunk.lights_fragment_begin.includes(DIR_LINE)) {
-    throw new Error('dualShadow: lights_fragment_beginに想定行がない(threeの更新でシェーダー原文が変わった)');
-  }
   THREE.ShaderChunk.lights_fragment_begin =
-    THREE.ShaderChunk.lights_fragment_begin.replace(DIR_LINE, DUAL_LINE);
+    replaceOrThrow(THREE.ShaderChunk.lights_fragment_begin, DIR_LINE, DUAL_LINE, 'dualShadow');
   THREE.ShaderChunk.shadowmap_pars_fragment += DUAL_FN;
 }

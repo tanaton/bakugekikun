@@ -5,8 +5,6 @@ export const clamp = (v: number, lo: number, hi: number): number =>
 
 export const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
-export const degToRad = (deg: number): number => deg * Math.PI / 180;
-
 export const euclideanModulo = (n: number, m: number): number => ((n % m) + m) % m;
 
 // smoothstep補間付きバイリニア格子サンプラ(地形グリッドと街路ワープ場で共用)

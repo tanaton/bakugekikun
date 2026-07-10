@@ -7,9 +7,10 @@
 
 import * as THREE from 'three';
 import type { CityData } from '../core/cityGen';
-import { MAP_HALF, WATER_SURFACE_Y } from '../core/config';
+import { clampToMap, MAP_HALF, WATER_SURFACE_Y } from '../core/config';
 import { rngFor, type Rng } from '../core/rng';
 import { bandPt, shorePts, type WaterFeat } from '../core/terrain';
+import { replaceOrThrow } from './shaderPatch';
 import type { GroundPalette } from './sky';
 
 export interface WaterView {
@@ -27,9 +28,6 @@ export function applyWaterPalette(view: WaterView, G: GroundPalette): void {
   view.skyColor.value.set(G.waterSky);
   view.foamMat.color.set(G.waterFoam);
 }
-
-// 地図の縁でのクランプ(地図外へはみ出す湾の岸線を抑える)。水面と泡で共有
-const cl = (v: number): number => THREE.MathUtils.clamp(v, -MAP_HALF, MAP_HALF);
 
 // タイル可能な水面法線マップの画素データ(RGBA8)。整数波数ベクトルの正弦波の和を
 // 高さ場とし、その解析微分の勾配から法線を作る。波数が整数なのでタイル境界は
@@ -80,8 +78,7 @@ function makeWaterNormalTexture(rng: Rng): THREE.DataTexture {
   return tex;
 }
 
-// onBeforeCompileの置換対象原文(three r185)。threeの更新で原文が変わるとreplaceが
-// 空振りするため、見つからなければthrowで気付く(dualShadowと同じ約束)
+// onBeforeCompileの置換対象原文(three r185)。置換はreplaceOrThrowで空振りを検知する
 export const MAPN_LINE = 'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;';
 export const OUTGOING_LINE = 'vec3 outgoingLight = reflectedLight.directDiffuse + reflectedLight.indirectDiffuse + reflectedLight.directSpecular + reflectedLight.indirectSpecular + totalEmissiveRadiance;';
 
@@ -107,25 +104,22 @@ const FRESNEL = /* glsl */`
 export function patchWaterShader(
     sh: { uniforms: Record<string, THREE.IUniform>; fragmentShader: string },
     time: THREE.IUniform<number>, skyColor: THREE.IUniform<THREE.Color>): void {
-  if (!THREE.ShaderChunk.normal_fragment_maps.includes(MAPN_LINE) ||
-      !sh.fragmentShader.includes(OUTGOING_LINE)) {
-    throw new Error('patchWaterShader: 想定行がない(threeの更新でシェーダー原文が変わった)');
-  }
+  const tag = 'patchWaterShader';
   sh.uniforms.uWaterTime = time;
   sh.uniforms.uSkyColor = skyColor;
-  sh.fragmentShader = sh.fragmentShader
-    .replace('#include <common>', '#include <common>\nuniform float uWaterTime;\nuniform vec3 uSkyColor;')
-    // onBeforeCompile時点は#include展開前なので、該当チャンクを手動展開してから置換する
-    .replace('#include <normal_fragment_maps>',
-      THREE.ShaderChunk.normal_fragment_maps.replace(MAPN_LINE, DUAL_NORMAL))
-    .replace(OUTGOING_LINE, FRESNEL);
+  sh.fragmentShader = replaceOrThrow(sh.fragmentShader, '#include <common>',
+    '#include <common>\nuniform float uWaterTime;\nuniform vec3 uSkyColor;', tag);
+  // onBeforeCompile時点は#include展開前なので、該当チャンクを手動展開してから置換する
+  sh.fragmentShader = replaceOrThrow(sh.fragmentShader, '#include <normal_fragment_maps>',
+    replaceOrThrow(THREE.ShaderChunk.normal_fragment_maps, MAPN_LINE, DUAL_NORMAL, tag), tag);
+  sh.fragmentShader = replaceOrThrow(sh.fragmentShader, OUTGOING_LINE, FRESNEL, tag);
 }
 
 // ---------- 岸の泡 ----------
 
 const FOAM_W = 3;   // 泡の帯の幅(m)。岸線から水側へ
 
-// onBeforeCompileの置換対象原文(three r185 meshbasic)。見つからなければthrowで気付く
+// onBeforeCompileの置換対象原文(three r185 meshbasic)。置換はreplaceOrThrowで空振りを検知する
 export const FOAM_DIFFUSE_LINE = 'vec4 diffuseColor = vec4( diffuse, opacity );';
 
 // 泡マテリアルのシェーダーパッチ: 頂点属性foamInfo=(外1→内0のフェード, 揺らぎ位相)を
@@ -133,17 +127,16 @@ export const FOAM_DIFFUSE_LINE = 'vec4 diffuseColor = vec4( diffuse, opacity );'
 export function patchFoamShader(
     sh: { uniforms: Record<string, THREE.IUniform>; vertexShader: string; fragmentShader: string },
     time: THREE.IUniform<number>): void {
-  if (!sh.fragmentShader.includes(FOAM_DIFFUSE_LINE)) {
-    throw new Error('patchFoamShader: 想定行がない(threeの更新でシェーダー原文が変わった)');
-  }
+  const tag = 'patchFoamShader';
   sh.uniforms.uWaterTime = time;
-  sh.vertexShader = sh.vertexShader
-    .replace('#include <common>', '#include <common>\nattribute vec2 foamInfo;\nvarying vec2 vFoam;')
-    .replace('#include <begin_vertex>', 'vFoam = foamInfo;\n#include <begin_vertex>');
-  sh.fragmentShader = sh.fragmentShader
-    .replace('#include <common>', '#include <common>\nuniform float uWaterTime;\nvarying vec2 vFoam;')
-    .replace(FOAM_DIFFUSE_LINE, FOAM_DIFFUSE_LINE +
-      '\n\tdiffuseColor.a *= vFoam.x * ( 0.6 + 0.25 * sin( uWaterTime * 1.4 + vFoam.y ) );');
+  sh.vertexShader = replaceOrThrow(sh.vertexShader, '#include <common>',
+    '#include <common>\nattribute vec2 foamInfo;\nvarying vec2 vFoam;', tag);
+  sh.vertexShader = replaceOrThrow(sh.vertexShader, '#include <begin_vertex>',
+    'vFoam = foamInfo;\n#include <begin_vertex>', tag);
+  sh.fragmentShader = replaceOrThrow(sh.fragmentShader, '#include <common>',
+    '#include <common>\nuniform float uWaterTime;\nvarying vec2 vFoam;', tag);
+  sh.fragmentShader = replaceOrThrow(sh.fragmentShader, FOAM_DIFFUSE_LINE, FOAM_DIFFUSE_LINE +
+    '\n\tdiffuseColor.a *= vFoam.x * ( 0.6 + 0.25 * sin( uWaterTime * 1.4 + vFoam.y ) );', tag);
 }
 
 // 岸線(inset 0)と水側(inset -FOAM_W)の点列を結ぶ帯ジオメトリ。
@@ -157,7 +150,7 @@ function makeFoamGeometry(f: WaterFeat): THREE.BufferGeometry {
     const o = outer[i], q = inner[i];
     // 地図の縁で水面がクランプされる列は泡を消す(縁に沿った白線を出さない)
     const fade = Math.max(Math.abs(o.x), Math.abs(o.z), Math.abs(q.x), Math.abs(q.z)) > MAP_HALF ? 0 : 1;
-    pos.set([cl(o.x), 0, cl(o.z), cl(q.x), 0, cl(q.z)], i * 6);
+    pos.set([clampToMap(o.x), 0, clampToMap(o.z), clampToMap(q.x), 0, clampToMap(q.z)], i * 6);
     info.set([fade, i * 0.9, 0, i * 0.9], i * 4);
   }
   const idx: number[] = [];
@@ -197,7 +190,7 @@ export function buildWaterSurface(city: CityData, group: THREE.Group, G: GroundP
     const shape = new THREE.Shape();
     // 岸線はdrawGroundと同じshorePtsをたどる(湾は地図の縁でクランプ)
     shorePts(f, 0).forEach((p, i) => {
-      const px = f.kind === 'band' ? p.x : cl(p.x), pz = f.kind === 'band' ? p.z : cl(p.z);
+      const px = f.kind === 'band' ? p.x : clampToMap(p.x), pz = f.kind === 'band' ? p.z : clampToMap(p.z);
       if (i) shape.lineTo(px, -pz); else shape.moveTo(px, -pz);
     });
     if (f.kind === 'band') {

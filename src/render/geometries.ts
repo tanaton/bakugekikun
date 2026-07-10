@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 
 // 複数ジオメトリを非インデックスで結合し、順にマテリアルグループを振る
-export function mergeGroups(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {
+function mergeGroups(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {
   const pos: number[] = [], nor: number[] = [], uv: number[] = [];
   const groups: [number, number, number][] = [];
   let start = 0;

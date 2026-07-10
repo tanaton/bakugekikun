@@ -1,6 +1,5 @@
 // メインループ
 
-import { TIMES } from '../render/sky';
 import { updateHUD, setPerf } from '../ui/hud';
 import { updateCamera, type InputState } from '../ui/input';
 import { isProfilerOn, profShow, pt, ptBegin } from '../ui/profiler';
@@ -30,7 +29,7 @@ export function stepSim(world: World, dt: number, now: number): void {
   updateBurningBldgs(world);     pt('brnBldgs');
   updateNukeEmitters(world, dt); pt('nukeEmit');
   updateCollapses(world, dt);
-  world.view.ground.flush(gfx.renderer, sim.simT, TIMES[world.settings.timeMode].ground);
+  world.view.ground.flush(gfx.renderer, sim.simT);
   pt('collapse');
   updateFx(world, dt);           pt('fx');
   world.debris.update(dt, world.city.terrain); pt('debris');

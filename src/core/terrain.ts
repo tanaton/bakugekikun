@@ -30,7 +30,10 @@ const bandWig = (f: Extract<WaterFeat, { kind: 'band' }>, t: number): number =>
 const discWig = (f: Extract<WaterFeat, { kind: 'disc' }>, a: number): number =>
   f.wig * (0.5 + 0.5 * Math.sin(a * 3 + f.ph));
 
-// 揺らぐ岸線の点列(insetは陸側への張り出し量。岸帯は+14、水面は0)。
+// 岸帯(陸側の砂色の帯)の張り出し幅(m)。shorePtsのinsetとして2D地面描画が使う
+export const BANK_INSET = 14;
+
+// 揺らぐ岸線の点列(insetは陸側への張り出し量。岸帯は+BANK_INSET、水面は0)。
 // 3D水面メッシュと2D地面描画が必ず同じ岸線をたどるための共用サンプラ
 export function shorePts(f: WaterFeat, inset: number): Vec2[] {
   const pts: Vec2[] = [];

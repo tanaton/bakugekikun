@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import type { CityData } from '../core/cityGen';
 import { GROUND_SCALE, GROUND_TEX, GROUND_WORLD, MAP_HALF, worldToTex } from '../core/config';
 import { mulberry32, type Rng } from '../core/rng';
-import { bandPt, shorePts } from '../core/terrain';
+import { BANK_INSET, bandPt, shorePts } from '../core/terrain';
 import type { Building, Vec2 } from '../core/types';
 import { makeCanvas } from './canvas2d';
 import type { GroundPalette } from './sky';
@@ -63,6 +63,7 @@ export class GroundView {
   private readonly craters: Extract<Stamp, { kind: 'crater' }>[] = [];   // pushLotの走査用の別引き
   private drawn = 0;      // gCanvasへ描き込み済みの件数
   private flushAt = 0;    // GPU転送の間引き用(連続爆撃で毎フレーム転送しない)
+  private palette!: GroundPalette;   // 現在の時間帯パレット(drawGroundで確定。flushの差分描きが使う)
 
   constructor(private readonly city: CityData, noiseRng: Rng) {
     ensureCanvases();
@@ -99,14 +100,17 @@ export class GroundView {
     this.mesh.receiveShadow = true;
   }
 
-  // クレーターを登録する(scorch/nuke等の他の跡はpushStampでよい)
+  // クレーターを登録する(scorch/nuke等の他の跡はpushStampでよい)。
+  // 水面は跡が残らない、はスタンプ機構側のルール(呼び出し側は無条件に登録してよい)
   pushCrater(x: number, z: number, r: number): void {
+    if (this.city.terrain.inWater(x, z)) return;
     const st = { kind: 'crater' as const, x, z, r, seed: (Math.random() * 2 ** 31) | 0 };
     this.stamps.push(st);
     this.craters.push(st);
   }
 
   pushStamp(st: Stamp): void {
+    if (this.city.terrain.inWater(st.x, st.z)) return;
     this.stamps.push(st);
   }
 
@@ -191,13 +195,13 @@ export class GroundView {
   // 新しく増えた跡だけをテクスチャへ差分追記する(drawGroundの全再描画は重い)。
   // GPUへも跡のダーティ矩形だけを部分転送し、毎回の全量(2048²≈16.8MB)アップロードを避ける。
   // rendererなし(nodeテスト)や、離れた複数の跡で矩形が肥大したときは全量転送にフォールバック
-  flush(renderer: THREE.WebGLRenderer | null, simT: number, G: GroundPalette): void {
+  flush(renderer: THREE.WebGLRenderer | null, simT: number): void {
     if (this.drawn >= this.stamps.length || simT < this.flushAt) return;
     this.flushAt = simT + 0.15;
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
     for (; this.drawn < this.stamps.length; this.drawn++) {
       const st = this.stamps[this.drawn];
-      this.drawStamp(gCtx!, G, st);
+      this.drawStamp(gCtx!, this.palette, st);
       const px = worldToTex(st.x), pz = worldToTex(st.z), r = stampRadiusPx(st);
       x0 = Math.min(x0, px - r); z0 = Math.min(z0, pz - r);
       x1 = Math.max(x1, px + r); z1 = Math.max(z1, pz + r);
@@ -215,6 +219,7 @@ export class GroundView {
 
   // 地面テクスチャの描画(時間帯トグルで呼び直す)
   drawGround(G: GroundPalette): void {
+    this.palette = G;
     const TEX = GROUND_TEX, s = GROUND_SCALE, w2c = worldToTex;
     const g = gCtx!;
     const city = this.city;
@@ -276,7 +281,7 @@ export class GroundView {
             trace(pts, true);
             g.fillStyle = color; g.fill();
           };
-          bankFills.push(() => fillBand(14, G.bank));
+          bankFills.push(() => fillBand(BANK_INSET, G.bank));
           waterFills.push(() => fillBand(0, G.water));
         }
         continue;
@@ -296,7 +301,7 @@ export class GroundView {
           trace(shorePts(f, inset), true);
           g.fillStyle = color; g.fill();
         };
-        bankFills.push(() => fillBlob(14, G.bank));
+        bankFills.push(() => fillBlob(BANK_INSET, G.bank));
         waterFills.push(() => fillBlob(0, G.water));
       }
     }

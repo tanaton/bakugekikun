@@ -7,7 +7,7 @@
 import { N_CARS, PLACE_FOREST, PLACE_TREE, ROAD_STEP, inMap } from './config';
 import { hslToRgb, jitterHdr } from './color';
 import { addBuildingLot, BUILDING_KINDS, lotToWorld, pushTree, type GenCity } from './lots';
-import { bakeRoadHeights, carPose, cullMountainAlleys, cullMountainRoads, RoadMask } from './roads';
+import { bakeRoadHeights, carPose, cullMountainAlleys, cullMountainRoads, laneOffset, RoadMask } from './roads';
 import { genGridPlan, genRadialPlan } from './plans';
 import { pick, rngFor } from './rng';
 import { SpatialHash } from './spatialHash';
@@ -74,8 +74,8 @@ export function generateCityData(seed: string): CityData {
       px: 0, pz: 0,
     };
     // 被弾判定用の位置キャッシュを初期化(以降はupdateCarsが毎フレーム更新)
-    const p = carPose(rp, c.s);
-    c.px = p.x + p.dz * c.lane; c.pz = p.z - p.dx * c.lane;
+    const q = laneOffset(carPose(rp, c.s), c.lane);
+    c.px = q.x; c.pz = q.z;
     cars.push(c);
   }
   const movingCars = cars.length;
@@ -114,7 +114,7 @@ export function generateCityData(seed: string): CityData {
       const p = carPose(rp, sd);
       const off = rp.w / 2 + 3.5;
       for (const sgn of [1, -1]) {
-        const tx = p.x + p.dz * off * sgn, tz = p.z - p.dx * off * sgn;
+        const { x: tx, z: tz } = laneOffset(p, off * sgn);
         if (roadMask.onRoad(tx, tz)) continue;  // 交差点上には植えない
         pushTree(gen, tx, tz, 6 + treesRng() * 4, treesRng, PLACE_TREE);
       }

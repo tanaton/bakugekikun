@@ -3,7 +3,16 @@
 import type * as THREE from 'three';
 import type { Building } from '../core/types';
 import type { FxMesh } from '../render/fxPool';
-import type { HudStats } from '../ui/hud';
+import type { WeaponSplit } from './weapons';
+
+// HUDに表示する統計(演出用の値は持たない。カウントアップ表示はhud.ts側の状態)
+export interface HudStats {
+  bDead: number; bTotal: number;
+  cDead: number; cTotal: number;
+  tDead: number; tTotal: number;
+  mCount: number;
+  damage: number;
+}
 
 export interface Missile {
   pos: THREE.Vector3;
@@ -12,8 +21,8 @@ export interface Missile {
   mesh: THREE.Mesh;
   marker: THREE.Mesh | null;
   trailT: number;
-  split: boolean;              // クラスター弾: 上空で子弾に分裂
-  boom: number | 'nuke';       // 'nuke' か通常爆発の半径
+  split: WeaponSplit | null;   // クラスター弾: 上空で子弾に分裂
+  boom: number | 'nuke';       // 着弾時の爆発(半径 or 戦術核)
 }
 
 export interface ActiveFx {
@@ -54,7 +63,7 @@ export function createSimState(): SimState {
     simT: 0,
     missiles: [], fx: [], collapsing: [],
     delayedBooms: [], burnSites: [], burningBldgs: [], nukeEmitters: [],
-    stats: { bDead: 0, bTotal: 0, cDead: 0, cTotal: 0, tDead: 0, tTotal: 0, mCount: 0, damage: 0, shown: 0 },
+    stats: { bDead: 0, bTotal: 0, cDead: 0, cTotal: 0, tDead: 0, tTotal: 0, mCount: 0, damage: 0 },
     shake: 0,
   };
 }

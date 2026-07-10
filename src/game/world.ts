@@ -9,8 +9,9 @@ import { buildCityView, type CityView } from '../render/cityMeshes';
 import { applyWaterPalette } from '../render/water';
 import type { Gfx } from '../render/gfx';
 import { LIGHT_SCALE, TIMES, type TimeMode } from '../render/sky';
-import { resetNukeFlash } from '../ui/hud';
+import { resetHUD, resetNukeFlash } from '../ui/hud';
 import { DebrisSystem } from './debris';
+import { removeMissile } from './missiles';
 import { createSimState, type SimState } from './simState';
 
 export interface Settings {
@@ -55,10 +56,7 @@ function setTotals(world: World): void {
 // シミュレーション状態のリセット(飛翔中のミサイル・エフェクト・光源・瓦礫を消す)
 function resetSim(world: World): void {
   const { sim, gfx } = world;
-  for (const m of sim.missiles) {
-    gfx.scene.remove(m.mesh);
-    if (m.marker) gfx.scene.remove(m.marker);
-  }
+  for (const m of sim.missiles) removeMissile(world, m);
   for (const f of sim.fx) gfx.fx.release(f.mesh);
   for (const L of gfx.boomLights) L.intensity = 0;
   for (const L of gfx.nukeLights) L.intensity = 0;
@@ -66,6 +64,7 @@ function resetSim(world: World): void {
   gfx.fireP.clear();
   gfx.smokeP.clear();
   resetNukeFlash();
+  resetHUD();
   world.sim = createSimState();
 }
 
@@ -93,9 +92,7 @@ export function applyTime(world: World, mode: TimeMode): void {
   hemi.intensity = T.hemiInt * LIGHT_SCALE;
   sun.color.setHex(T.sunCol); sun.intensity = T.sunInt * LIGHT_SCALE;
   sunShadow.setSunOffset(T.sunPos);   // 影の向きは次フレームのupdateで反映される
-  for (const m of world.view.emissiveMats) {
-    m.emissiveIntensity = T.emissive * ((m.userData.eScale as number) || 1);
-  }
+  world.view.setEmissiveIntensity(T.emissive);
   world.view.ground.drawGround(T.ground);
   if (world.view.water) applyWaterPalette(world.view.water, T.ground);
 }

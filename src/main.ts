@@ -57,7 +57,7 @@ $('shadowBtn').addEventListener('click', () => {
 $('weaponBtn').addEventListener('click', () => {
   world.settings.weaponIdx = (world.settings.weaponIdx + 1) % WEAPONS.length;
   const w = WEAPONS[world.settings.weaponIdx];
-  setWeaponLabel(w.label, w.id === 'nuke');
+  setWeaponLabel(w.label, w.hot);
 });
 $('soundBtn').addEventListener('click', () => {
   setSoundLabel(toggleSound());
@@ -69,7 +69,7 @@ setTimeLabel(world.settings.timeMode);
 setShadowLabel(shadowMode);
 setSoundLabel(isSoundOn());
 const w0 = WEAPONS[world.settings.weaponIdx];
-setWeaponLabel(w0.label, w0.id === 'nuke');
+setWeaponLabel(w0.label, w0.hot);
 setPlanName(world.city.plan);
 updateHUD(world.sim.stats);
 

@@ -2,8 +2,11 @@
 
 import { CAR_VALUE } from '../core/config';
 import { B, type Building, type Car } from '../core/types';
-import { FALLEN_COL, hideCarInstance, setBuildingLit, setBuildingMatrix, toppleMatrix } from '../render/cityMeshes';
-import { DirtyRanges, flushRange, HIDDEN_MAT } from '../render/instanced';
+import {
+  flushHiddenTrees, hideBuildingInstance, hideCarInstance, hideTreeInstance,
+  markBuildingFallen, setBuildingLit, setBuildingMatrix, toppleMatrix,
+} from '../render/cityMeshes';
+import { DirtyRanges } from '../render/instanced';
 import { playPop } from '../ui/audio';
 import type { World } from './world';
 
@@ -30,8 +33,6 @@ export function startCollapse(world: World, b: Building,
   }
 }
 
-// 行列を書き換えたチャンク(キーはt.ci)のmi範囲。チャンク全体でなく書き換えた範囲だけGPUへ転送する
-const _treeHit = new DirtyRanges();
 export function destroyAround(world: World, p: { x: number; z: number }, R: number,
     depth = 0, wave = 0): void {
   const { sim, index, view, city } = world;
@@ -76,13 +77,11 @@ export function destroyAround(world: World, p: { x: number; z: number }, R: numb
     const dx = t.x - p.x, dz = t.z - p.z;
     if (dx * dx + dz * dz <= TRsq) {
       t.alive = false;
-      view.treeChunks[t.ci].setMatrixAt(t.mi, HIDDEN_MAT);
-      _treeHit.add(t.ci, t.mi);
+      hideTreeInstance(view, t);
       sim.stats.tDead++;
     }
   });
-  if (_treeHit.size) world.gfx.sunShadow.markFarDirty();   // 消えた木を全域シャドウマップにも反映
-  _treeHit.flush(ci => view.treeChunks[ci].instanceMatrix, 16);
+  if (flushHiddenTrees(view)) world.gfx.sunShadow.markFarDirty();   // 消えた木を全域シャドウマップにも反映
 }
 
 // 行列を書き換えたメッシュ種別(キーはb.k)のmi範囲。種別の全棟でなく範囲だけGPUへ転送する
@@ -107,9 +106,7 @@ export function updateCollapses(world: World, dt: number): void {
       if (c.t >= 1) {
         toppleMatrix(view.bMeshes, b, c.amax, c.dirx, c.dirz);
         b.state = B.Dead;
-        const mesh = view.bMeshes[b.k];
-        mesh.setColorAt(b.mi, FALLEN_COL);
-        flushRange(mesh.instanceColor!, b.mi, b.mi, 3);
+        markBuildingFallen(view, b);
         view.ground.pushLot(b);   // 根本の基礎跡(焦げ跡の中では省略される)
         // 着地の粉塵が倒れた方向に走る
         for (let j = 0; j < 16; j++) {
@@ -138,7 +135,7 @@ export function updateCollapses(world: World, dt: number): void {
       // 圧壊: その場に沈み、沈みきったら本体を隠して基礎跡だけを地面に残す
       if (c.t >= 1) {
         b.state = B.Dead;
-        view.bMeshes[b.k].setMatrixAt(b.mi, HIDDEN_MAT);
+        hideBuildingInstance(view, b);
         view.ground.pushLot(b);
         collapsing.splice(i, 1);
         continue;

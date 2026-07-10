@@ -6,10 +6,11 @@ import type { CityData } from '../core/cityGen';
 import { MAP_HALF } from '../core/config';
 import { BUILDING_KINDS, HOUSE_K0, ROOF_COLS } from '../core/lots';
 import { rngFor } from '../core/rng';
-import type { Building } from '../core/types';
+import type { Building, Tree } from '../core/types';
 import { makeHouseGeometry, makeTowerGeometry, makeTreeGeometries } from './geometries';
 import { GroundView } from './ground';
-import { flushRange, forEachMaterial, HIDDEN_MAT, instanceDummy, setInstanceAt } from './instanced';
+import { DirtyRanges, flushRange, forEachMaterial, HIDDEN_MAT, instanceDummy, setInstanceAt } from './instanced';
+import { replaceOrThrow } from './shaderPatch';
 import { excludeFromFarShadow, TIMES, type TimeMode } from './sky';
 import { makeConcreteTexture, makeGlassTexture, makeHouseTexture, type TexPair } from './textures';
 import { buildWaterSurface, type WaterView } from './water';
@@ -21,8 +22,8 @@ export interface CityView {
   carMesh: THREE.InstancedMesh;
   ground: GroundView;
   water: WaterView | null;
-  emissiveMats: THREE.MeshLambertMaterial[];   // 時間帯で窓明かりの強さを切り替える
   litAttrs: THREE.InstancedBufferAttribute[];  // 建物ごとの窓明かり(1=点灯 0=消灯)。bMeshesと同順
+  setEmissiveIntensity(base: number): void;    // 窓明かりの強さの時間帯切り替え(マテリアル別スケールを乗算)
   dispose(): void;
 }
 
@@ -34,7 +35,19 @@ export function setBuildingLit(view: CityView, b: Building, on: boolean): void {
 }
 
 // 倒壊した建物の焼け色(このモジュールがcolorModeを先にimportしているので変換されない)
-export const FALLEN_COL = new THREE.Color(0x5c564e);
+const FALLEN_COL = new THREE.Color(0x5c564e);
+
+// 倒壊しきった建物を焼け色にする(インスタンス色の書き込みと転送予約はここに閉じる)
+export function markBuildingFallen(view: CityView, b: Building): void {
+  const mesh = view.bMeshes[b.k];
+  mesh.setColorAt(b.mi, FALLEN_COL);
+  flushRange(mesh.instanceColor!, b.mi, b.mi, 3);
+}
+
+// 圧壊しきった建物を画面外へ隠す(転送はupdateCollapsesの建物範囲転送に乗る)
+export function hideBuildingInstance(view: CityView, b: Building): void {
+  view.bMeshes[b.k].setMatrixAt(b.mi, HIDDEN_MAT);
+}
 
 // 建物のインスタンス行列を書く(sy=高さ倍率、tiltX/Z=傾き)
 export function setBuildingMatrix(bMeshes: THREE.InstancedMesh[], b: Building,
@@ -70,6 +83,21 @@ export function hideCarInstance(view: CityView, i: number): void {
   flushRange(view.carMesh.instanceMatrix, i, i, 16);
 }
 
+// 破壊された木を画面外へ隠す。行列を書き換えたチャンク(キーはt.ci)のmi範囲を積み、
+// flushHiddenTreesがチャンク全体でなく書き換えた範囲だけGPUへ転送予約する
+const _treeHit = new DirtyRanges();
+export function hideTreeInstance(view: CityView, t: Tree): void {
+  view.treeChunks[t.ci].setMatrixAt(t.mi, HIDDEN_MAT);
+  _treeHit.add(t.ci, t.mi);
+}
+
+// 隠した木の範囲をまとめて転送予約する。1本でも消えていればtrue(全域シャドウの再焼き判断用)
+export function flushHiddenTrees(view: CityView): boolean {
+  if (!_treeHit.size) return false;
+  _treeHit.flush(ci => view.treeChunks[ci].instanceMatrix, 16);
+  return true;
+}
+
 const _color = new THREE.Color();
 
 // 木を空間チャンク×樹種ごとのInstancedMeshに分ける。街全体で1メッシュだと
@@ -81,15 +109,12 @@ const _color = new THREE.Color();
 // 個体差・紅葉の色はインスタンス色で葉に掛けるが、同じ色が幹にも掛かって
 // 紅葉の幹が赤くなってしまうため、幹のマテリアルはインスタンス色を無視する。
 // onBeforeCompile時点のvertexShaderは#include展開前(展開はWebGLProgram内)なので、
-// 該当チャンクをここで手動展開してから乗算行を消す。threeの更新で原文が変わると
-// replaceが空振りするため、見つからなければthrowで気付く(dualShadowと同じ約束)
+// 該当チャンクをここで手動展開してから乗算行を消す(置換はreplaceOrThrowで空振りを検知)
 const INSTANCE_COLOR_LINE = 'vColor.rgb *= instanceColor.rgb;';
 const ignoreInstanceColor = (sh: { vertexShader: string }): void => {
-  if (!THREE.ShaderChunk.color_vertex.includes(INSTANCE_COLOR_LINE)) {
-    throw new Error('ignoreInstanceColor: color_vertexに想定行がない(threeの更新でシェーダー原文が変わった)');
-  }
-  sh.vertexShader = sh.vertexShader.replace('#include <color_vertex>',
-    THREE.ShaderChunk.color_vertex.replace(INSTANCE_COLOR_LINE, ''));
+  sh.vertexShader = replaceOrThrow(sh.vertexShader, '#include <color_vertex>',
+    replaceOrThrow(THREE.ShaderChunk.color_vertex, INSTANCE_COLOR_LINE, '', 'ignoreInstanceColor'),
+    'ignoreInstanceColor');
 };
 
 function buildTreeChunks(city: CityData): THREE.InstancedMesh[] {
@@ -170,26 +195,28 @@ export function buildCityView(scene: THREE.Scene, city: CityData, timeMode: Time
   const counts = new Array<number>(BUILDING_KINDS).fill(0);
   for (const b of city.buildings) counts[b.k] = Math.max(counts[b.k], b.mi + 1);
 
-  const emissiveMats: THREE.MeshLambertMaterial[] = [];
+  const emissive: { mat: THREE.MeshLambertMaterial; scale: number }[] = [];
   // 窓明かりの消灯用インスタンス属性 'lit' をemissiveに乗算する。
   // emissiveはインスタンス色の影響を受けないため、倒壊した建物の窓が
   // 光りっぱなしにならないよう属性で制御する
   const litEmissive = (sh: { vertexShader: string; fragmentShader: string }): void => {
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float lit;\nvarying float vLit;')
-      .replace('#include <begin_vertex>', 'vLit = lit;\n#include <begin_vertex>');
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vLit;')
-      .replace('vec3 totalEmissiveRadiance = emissive;',
-        'vec3 totalEmissiveRadiance = emissive * vLit;');
+    const tag = 'litEmissive';
+    sh.vertexShader = replaceOrThrow(sh.vertexShader, '#include <common>',
+      '#include <common>\nattribute float lit;\nvarying float vLit;', tag);
+    sh.vertexShader = replaceOrThrow(sh.vertexShader, '#include <begin_vertex>',
+      'vLit = lit;\n#include <begin_vertex>', tag);
+    sh.fragmentShader = replaceOrThrow(sh.fragmentShader, '#include <common>',
+      '#include <common>\nvarying float vLit;', tag);
+    sh.fragmentShader = replaceOrThrow(sh.fragmentShader,
+      'vec3 totalEmissiveRadiance = emissive;',
+      'vec3 totalEmissiveRadiance = emissive * vLit;', tag);
   };
   const mkFacade = (t: TexPair, eScale: number, eCol: number): THREE.MeshLambertMaterial => {
     const m = new THREE.MeshLambertMaterial({
       map: t.map, emissive: new THREE.Color(eCol),
       emissiveMap: t.emissiveMap, emissiveIntensity: TIMES[timeMode].emissive * eScale });
     m.onBeforeCompile = litEmissive;
-    m.userData.eScale = eScale;
-    emissiveMats.push(m);
+    emissive.push({ mat: m, scale: eScale });
     return m;
   };
   // 窓明かりの色: コンクリビル=温白、ガラスビル=蛍光灯寄りの涼白、民家=電球色寄りの白
@@ -253,7 +280,10 @@ export function buildCityView(scene: THREE.Scene, city: CityData, timeMode: Time
   ground.drawGround(G);
 
   return {
-    group, bMeshes, treeChunks, carMesh, ground, water, emissiveMats, litAttrs,
+    group, bMeshes, treeChunks, carMesh, ground, water, litAttrs,
+    setEmissiveIntensity: (base: number): void => {
+      for (const e of emissive) e.mat.emissiveIntensity = base * e.scale;
+    },
     dispose: makeDisposer(scene, group),
   };
 }

@@ -1,7 +1,10 @@
 // ゲーム全体で共有する定数(純粋層。three/DOMに依存しない)
 
+import { clamp } from './math';
+
 export const CITY_HALF = 2500;          // 街の半径 (m) → 5km四方
 export const MAP_HALF = 2700;           // 余白込みの世界半径。カメラ移動・着弾クランプ・空間ハッシュの原点
+export const clampToMap = (v: number): number => clamp(v, -MAP_HALF, MAP_HALF);
 export const CAR_VALUE = 3000000;       // 車1台の被害額
 export const FLOOR_H = 3.5;             // 1フロアの高さ
 export const VALUE_PER_M2_FLOOR = 300000;      // 床面積1m2あたりの資産額

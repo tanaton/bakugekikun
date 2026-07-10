@@ -1,7 +1,7 @@
 // 車の走行(道路パスに沿う)
 
 import { ROAD_STEP } from '../core/config';
-import { carPose } from '../core/roads';
+import { carPose, laneOffset } from '../core/roads';
 import { flushRange } from '../render/instanced';
 import type { World } from './world';
 
@@ -25,7 +25,8 @@ export function updateCars(world: World, dt: number): void {
       else if (c.s <= 0) { c.s = -c.s; c.dir = 1; }
     }
     const p = carPose(road, c.s);
-    const px = p.x + p.dz * c.lane, pz = p.z - p.dx * c.lane;   // 進行方向の横にレーンオフセット
+    const q = laneOffset(p, c.lane);   // 進行方向の横にレーンオフセット
+    const px = q.x, pz = q.z;
     c.px = px; c.pz = pz;   // destroyAroundの被弾判定用にキャッシュ(carPoseの再計算を避ける)
     const hx = p.dx * c.dir, hz = p.dz * c.dir;   // 正規化済みの進行方向
     const o = c.i * 16;

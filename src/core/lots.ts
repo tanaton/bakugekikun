@@ -9,11 +9,11 @@ import type { Rng } from './rng';
 import type { Terrain } from './terrain';
 import { B, type Building, type Lot, type LotDecal, type Tree, type Vec2 } from './types';
 
-export const PAL_CON = [0xcfd2d6, 0xd8d2c6, 0xbac4cc, 0xc9c9c2, 0xaab4be, 0xd6cfc2, 0x9aa6b0,
+const PAL_CON = [0xcfd2d6, 0xd8d2c6, 0xbac4cc, 0xc9c9c2, 0xaab4be, 0xd6cfc2, 0x9aa6b0,
   0xb9a88f, 0x8f9a8b, 0xa5988a, 0x93a0a8, 0xc2b6a0, 0x847e74, 0xbfae9c];      // ベージュ・煉瓦・緑灰なども
-export const PAL_GLA = [0xe9eff6, 0xd8e2ec, 0xc6d2e0, 0xe2e8ee, 0xcdd8e2,
+const PAL_GLA = [0xe9eff6, 0xd8e2ec, 0xc6d2e0, 0xe2e8ee, 0xcdd8e2,
   0xbfd8d2, 0xaebfd8, 0xd8e4da, 0x9fb4cf];                                     // ティール・スチールブルー系
-export const PAL_HOU = [0xf0ead8, 0xe6ddca, 0xdcd6c6, 0xd2d8dc, 0xdde2d2, 0xe8d8c0, 0xcfc8b8,
+const PAL_HOU = [0xf0ead8, 0xe6ddca, 0xdcd6c6, 0xd2d8dc, 0xdde2d2, 0xe8d8c0, 0xcfc8b8,
   0xe8d4d0, 0xd4dde6, 0xd8e4d4, 0xefe2b8, 0xcfc4b2,                            // 淡いピンク・水色・ミントなど
   0xf5f2ea, 0xe0cdb8, 0xd9cfe0, 0xc9d2c2, 0xe4c8b0, 0xd8d8d8, 0xc8bfae, 0xe6d2a8]; // 白・サンド・ラベンダー・セージ・テラコッタ・グレー系
 export const ROOF_COLS = [0x9a5648, 0x55616c, 0x4a6250, 0x3f4145, 0xa96a3f, 0x6e5a48]; // 屋根: 赤茶/スレート/深緑/炭/オレンジ/焦茶
@@ -50,7 +50,7 @@ export function pushTree(city: GenCity, x: number, z: number, s: number, rng: Rn
 }
 
 // ロットの縁(建物の隙間)に木を植える。anywhereなら区画全体に
-export function yardTrees(city: GenCity, lot: Lot, n: number, rng: Rng, anywhere = false): void {
+function yardTrees(city: GenCity, lot: Lot, n: number, rng: Rng, anywhere = false): void {
   for (let k = 0; k < n; k++) {
     let lx: number, lz: number;
     if (anywhere) {
@@ -69,7 +69,7 @@ export function yardTrees(city: GenCity, lot: Lot, n: number, rng: Rng, anywhere
 }
 
 // 空き区画をポケットパーク(緑地デカール + 密植)にする
-export function makePocketPark(city: GenCity, lot: Lot, rng: Rng, minWD: number, minTrees: number): void {
+function makePocketPark(city: GenCity, lot: Lot, rng: Rng, minWD: number, minTrees: number): void {
   city.lotDecals.push({ x: lot.x, z: lot.z, rot: lot.rot,
     w: Math.max(minWD, lot.availW - 3), d: Math.max(minWD, lot.availD - 3), kind: 'park' });
   yardTrees(city, lot, clamp(Math.floor(lot.availW * lot.availD / 55), minTrees, 45), rng, true);

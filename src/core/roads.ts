@@ -37,6 +37,16 @@ export function resamplePath(raw: Vec2[], loop: boolean): RoadPt[] {
 }
 
 export interface CarPose { x: number; z: number; dx: number; dz: number; h: number; hs: number }
+
+// パス上の点から進行方向の右横(+off)へずらした位置。右側=(dz, -dx)の符号約束を
+// レーン位置・並木・横断勾配サンプルで共有する(ずれるとカント路面で車が浮く/沈む)。
+// 戻り値は共有スクラッチ(carPose同様アロケーションしない)。呼び出しをまたいで保持しないこと
+const _lanePt: Vec2 = { x: 0, z: 0 };
+export function laneOffset(p: { x: number; z: number; dx: number; dz: number }, off: number): Vec2 {
+  _lanePt.x = p.x + p.dz * off;
+  _lanePt.z = p.z - p.dx * off;
+  return _lanePt;
+}
 // パス上の距離sにおける位置と進行方向(h/hs/dx/dzはbakeRoadHeightsで事前計算済み)。
 // 戻り値は共有スクラッチ(毎フレーム全車で呼ぶためアロケーションしない)。呼び出しをまたいで保持しないこと
 const _pose: CarPose = { x: 0, z: 0, dx: 0, dz: 0, h: 0, hs: 0 };
@@ -73,7 +83,8 @@ export function bakeRoadHeights(roadPaths: RoadPath[], terrain: Terrain): void {
       p.dx = dx / l; p.dz = dz / l;
       p.h = terrain.h(p.x, p.z);
       // 進行方向の横(レーンオフセットと同じ向き)に道路半幅ぶん離れた点との高低差
-      p.hs = (terrain.h(p.x + p.dz * w2, p.z - p.dx * w2) - p.h) / w2;
+      const q = laneOffset(p, w2);
+      p.hs = (terrain.h(q.x, q.z) - p.h) / w2;
     }
   }
 }

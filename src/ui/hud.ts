@@ -1,37 +1,32 @@
 // HUDのDOM操作(統計表示・ラベル・ヒント・核閃光)
 
 import type { CityPlanKind } from '../core/types';
+import type { HudStats } from '../game/simState';
 import type { ShadowMode } from '../render/gfx';
 import type { TimeMode } from '../render/sky';
 
 export const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
-export function yen(v: number): string {
+function yen(v: number): string {
   if (v >= 1e12) return '¥' + (v / 1e12).toFixed(2) + '兆';
   if (v >= 1e8) return '¥' + (v / 1e8).toFixed(1) + '億';
   if (v >= 1e4) return '¥' + Math.round(v / 1e4).toLocaleString() + '万';
   return '¥' + Math.round(v).toLocaleString();
 }
 
-export interface HudStats {
-  bDead: number; bTotal: number;
-  cDead: number; cTotal: number;
-  tDead: number; tTotal: number;
-  mCount: number;
-  damage: number;
-  shown: number;   // 被害総額の表示用アニメーション値
+const hudShown: Record<string, string> = {};   // 前回表示した文字列。変化した項目だけDOMを書き換える
+function setHud(id: string, value: number, fmt?: (v: number) => string): void {
+  const s = fmt ? fmt(value) : value.toLocaleString();
+  if (hudShown[id] === s) return;
+  hudShown[id] = s;
+  $(id).textContent = s;
 }
 
-const hudShown: Record<string, number> = {};   // 前回表示した生の値。変化した項目だけDOMを書き換える
-function setHud(id: string, value: number, fmt?: (v: number) => string): void {
-  if (hudShown[id] === value) return;
-  hudShown[id] = value;
-  $(id).textContent = fmt ? fmt(value) : value.toLocaleString();
-}
+let dmgShown = 0;   // 被害総額のカウントアップ演出値(表示専用の状態なのでHUD側で持つ)
 
 export function updateHUD(stats: HudStats): void {
-  stats.shown += (stats.damage - stats.shown) * 0.08;
-  if (stats.damage - stats.shown < 1e5) stats.shown = stats.damage;
+  dmgShown += (stats.damage - dmgShown) * 0.08;
+  if (stats.damage - dmgShown < 1e5) dmgShown = stats.damage;
   setHud('bDead', stats.bDead);
   setHud('bTotal', stats.bTotal);
   setHud('cDead', stats.cDead);
@@ -39,7 +34,11 @@ export function updateHUD(stats: HudStats): void {
   setHud('tDead', stats.tDead);
   setHud('tTotal', stats.tTotal);
   setHud('mCount', stats.mCount);
-  setHud('dmgTotal', stats.shown, yen);
+  setHud('dmgTotal', dmgShown, yen);
+}
+
+export function resetHUD(): void {
+  dmgShown = 0;
 }
 
 export function setPlanName(plan: CityPlanKind): void {

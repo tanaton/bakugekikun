@@ -1,7 +1,7 @@
 // カメラ操作(WASD移動・ドラッグ回転・ホイールズーム)と右クリック爆撃指定
 
 import * as THREE from 'three';
-import { MAP_HALF } from '../core/config';
+import { clampToMap } from '../core/config';
 import type { Terrain } from '../core/terrain';
 import type { SunShadow } from '../render/sky';
 import { initAudio } from './audio';
@@ -63,8 +63,8 @@ export function updateCamera(input: InputState, dt: number, terrain: Terrain,
   if (keys.KeyS) { cam.focus.x += fwx * sp; cam.focus.z += fwz * sp; }
   if (keys.KeyA) { cam.focus.x -= fwz * sp; cam.focus.z += fwx * sp; }
   if (keys.KeyD) { cam.focus.x += fwz * sp; cam.focus.z -= fwx * sp; }
-  cam.focus.x = THREE.MathUtils.clamp(cam.focus.x, -MAP_HALF, MAP_HALF);
-  cam.focus.z = THREE.MathUtils.clamp(cam.focus.z, -MAP_HALF, MAP_HALF);
+  cam.focus.x = clampToMap(cam.focus.x);
+  cam.focus.z = clampToMap(cam.focus.z);
   cam.focus.y = terrain.h(cam.focus.x, cam.focus.z);   // 注視点は地形に追従
   sunShadow.update(cam);                               // 影カメラも注視点に追従
 

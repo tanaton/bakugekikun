@@ -152,7 +152,7 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
 
     // 再生成後も普通に遊べる
     for (let i = 0; i < 10; i++) { now += 16; stepSim(world, 0.016, now); }
-    detonate(world, { x: 0, y: world.city.terrain.h(0, 0), z: 0 });
+    detonate(world, { x: 0, y: world.city.terrain.h(0, 0), z: 0 }, 105);
     for (let i = 0; i < 120; i++) { now += 16; stepSim(world, 0.016, now); }
     expect(world.sim.stats.damage).toBeGreaterThanOrEqual(0);
   }, 60000);

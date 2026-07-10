@@ -62,10 +62,13 @@ const flashLight = (world: World, x: number, z: number, peak: number, gy = 0): v
 
 const _pv = new THREE.Vector3();
 
-export function detonate(world: World, p: { x: number; y: number; z: number }, R = 105): void {
+// 演出の規模係数の基準半径。R=R_REFのとき等倍で、子弾など小半径ほど縮む
+const R_REF = 105;
+
+export function detonate(world: World, p: { x: number; y: number; z: number }, R: number): void {
   const { gfx, sim, city, view, debris } = world;
   const FX = gfx.fx;
-  const f = R / 105;                 // 規模係数(クラスター子弾は小さめ)
+  const f = R / R_REF;               // 規模係数(クラスター子弾は小さめ)
   const sf = 0.55 + 0.45 * f;        // サイズ・速度の縮尺
   const gy = p.y;
   flashLight(world, p.x, p.z, 7 * f, gy);
@@ -77,11 +80,9 @@ export function detonate(world: World, p: { x: number; y: number; z: number }, R
   // --- 衝撃波リング(発光 + 土埃の二重) ---
   ringFx(world, FX.ringAddD(0xffd9a8, 0.95), p.x, gy + 2.5, p.z, 0.7, 8 * f, 420 * f, 0.55, 0.95);
   ringFx(world, FX.ringD(0x8a7458, 0.5), p.x, gy + 1.8, p.z, 1.5, 12 * f, 520 * f, 0.6, 0.5);
-  // --- クレーターと焦げ跡を地面テクスチャへ焼き込む(水中への着弾は跡を残さない) ---
-  if (!city.terrain.inWater(p.x, p.z)) {
-    view.ground.pushCrater(p.x, p.z, R * 0.7);
-    view.ground.pushStamp({ kind: 'scorch', x: p.x, z: p.z, r: R * 1.6 });
-  }
+  // --- クレーターと焦げ跡を地面テクスチャへ焼き込む(水中はGroundView側が弾く) ---
+  view.ground.pushCrater(p.x, p.z, R * 0.7);
+  view.ground.pushStamp({ kind: 'scorch', x: p.x, z: p.z, r: R * 1.6 });
   // --- 火球パーティクル(白核 → 橙 → 深紅の三層) ---
   const cnt = (n: number): number => Math.max(4, Math.round(n * f));
   for (let i = 0; i < cnt(45); i++) {
@@ -245,11 +246,9 @@ export function detonateNuke(world: World, p: { x: number; y: number; z: number 
   ringFx(world, FX.ringD(0x8a7458, 0.6), p.x, gy + 2, p.z, 3.5, 30, 1900, 0.6, 0.6);
   // --- 上空の凝結リング(ウィルソン雲) ---
   ringFx(world, FX.ringD(0xf0f4f8, 0.55), p.x, gy + 260, p.z, 2.2, 80, 850, 0.7, 0.55);
-  // --- 巨大な焦げ跡と舗装の破壊跡を地面テクスチャへ焼き込む(水中への着弾は跡を残さない) ---
-  if (!city.terrain.inWater(p.x, p.z)) {
-    view.ground.pushCrater(p.x, p.z, R * 0.7);
-    view.ground.pushStamp({ kind: 'nuke', x: p.x, z: p.z, r: R * 1.3 });
-  }
+  // --- 巨大な焦げ跡と舗装の破壊跡を地面テクスチャへ焼き込む(水中はGroundView側が弾く) ---
+  view.ground.pushCrater(p.x, p.z, R * 0.7);
+  view.ground.pushStamp({ kind: 'nuke', x: p.x, z: p.z, r: R * 1.3 });
   // --- 土煙・スパーク・瓦礫 ---
   for (let i = 0; i < 150; i++) {
     const a = Math.random() * Math.PI * 2;

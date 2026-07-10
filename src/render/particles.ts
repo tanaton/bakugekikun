@@ -82,6 +82,8 @@ export class ParticlePool {
     this.pool.clear();
     this.alpha.fill(0);
     this.alphaAttr.needsUpdate = true;
+    this.size.fill(0);   // サイズも0に。透明でもサイズが残ると全discardのスプライトを描き続ける
+    this.sizeAttr.needsUpdate = true;
   }
 
   spawn(s: ParticleSpec): void {
@@ -106,7 +108,9 @@ export class ParticlePool {
       if (s < lo) lo = s;
       if (s > hi) hi = s;
       p.age += dt;
-      if (p.age >= p.life) { this.alpha[s] = 0; return false; }
+      // サイズも0にする(gl_PointSize=0は1pxに丸まる)。透明なままサイズが残ると
+      // 死んだスロットが全discardのスプライトをラスタライズし続ける
+      if (p.age >= p.life) { this.alpha[s] = 0; this.size[s] = 0; return false; }
       p.vy -= p.grav * dt;
       const dr = p.drag ? Math.exp(-p.drag * dt) : 1;
       p.vx *= dr; p.vy *= dr; p.vz *= dr;

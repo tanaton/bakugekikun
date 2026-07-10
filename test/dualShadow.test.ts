@@ -5,101 +5,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { MAP_HALF } from '../src/core/config';
 import { DIR_LINE } from '../src/render/dualShadow';
 import { TIMES } from '../src/render/sky';
-import { mkSunRig, type SunRig } from './helpers';
+import { assembleFragment, mkSunRig, type SunRig } from './helpers';
 
 const mkRig = (mode: 'day' | 'dusk' = 'day'): SunRig => mkSunRig(new THREE.Scene(), mode);
 
-// ---------- threeのシェーダー組み立ての再現(WebGLProgram.jsと同じ手順) ----------
-
-const includePattern = /^[ \t]*#include +<([\w\d./]+)>/gm;
-function resolveIncludes(s: string): string {
-  return s.replace(includePattern, (_m, inc: string) => {
-    const c = (THREE.ShaderChunk as unknown as Record<string, string>)[inc];
-    if (c === undefined) throw new Error(`unknown chunk: ${inc}`);
-    return resolveIncludes(c);
-  });
-}
-
-function replaceLightNums(s: string, dirLights: number, dirShadows: number): string {
-  return s
-    .replace(/NUM_DIR_LIGHTS/g, String(dirLights))
-    .replace(/NUM_SPOT_LIGHTS/g, '0')
-    .replace(/NUM_SPOT_LIGHT_MAPS/g, '0')
-    .replace(/NUM_SPOT_LIGHT_COORDS/g, '0')
-    .replace(/NUM_RECT_AREA_LIGHTS/g, '0')
-    .replace(/NUM_POINT_LIGHTS/g, '0')
-    .replace(/NUM_HEMI_LIGHTS/g, '1')
-    .replace(/NUM_DIR_LIGHT_SHADOWS/g, String(dirShadows))
-    .replace(/NUM_SPOT_LIGHT_SHADOWS_WITH_MAPS/g, '0')
-    .replace(/NUM_SPOT_LIGHT_SHADOWS/g, '0')
-    .replace(/NUM_POINT_LIGHT_SHADOWS/g, '0');
-}
-
-const unrollLoopPattern = /#pragma unroll_loop_start\s+for\s*\(\s*int\s+i\s*=\s*(\d+)\s*;\s*i\s*<\s*(\d+)\s*;\s*i\s*\+\+\s*\)\s*{([\s\S]+?)}\s+#pragma unroll_loop_end/g;
-function unrollLoops(s: string): string {
-  return s.replace(unrollLoopPattern, (_m, start: string, end: string, snippet: string) => {
-    let out = '';
-    for (let i = parseInt(start); i < parseInt(end); i++) {
-      out += snippet.replace(/\[\s*i\s*\]/g, `[ ${i} ]`).replace(/UNROLLED_LOOP_INDEX/g, String(i));
-    }
-    return out;
-  });
-}
-
-// 簡易プリプロセッサ: #if/#ifdef/#elif/#else/#endifを評価して有効枝だけを残す
-function preprocess(src: string, initialDefines: string[]): string {
-  const defines = new Map<string, string>(initialDefines.map(d => [d, '1']));
-  type Frame = { parent: boolean; active: boolean; taken: boolean };
-  const stack: Frame[] = [];
-  const cur = (): boolean => stack.length === 0 || stack[stack.length - 1].active;
-  const evalExpr = (e: string): boolean => {
-    const js = e
-      .replace(/defined\s*\(\s*(\w+)\s*\)/g, (_m, n: string) => defines.has(n) ? '1' : '0')
-      .replace(/[A-Za-z_]\w*/g, (n) => {
-        const v = defines.get(n);
-        return v !== undefined && /^\d+$/.test(v) ? v : '0';
-      });
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    return Boolean(new Function(`return (${js});`)());
-  };
-  // #ifdef/#ifndefは#if defined()へ正規化して分岐を1本にする
-  src = src
-    .replace(/^([ \t]*)#ifdef\s+(\w+)/gm, '$1#if defined( $2 )')
-    .replace(/^([ \t]*)#ifndef\s+(\w+)/gm, '$1#if ! defined( $2 )');
-  const out: string[] = [];
-  for (const line of src.split('\n')) {
-    const t = line.trim();
-    let m: RegExpExecArray | null;
-    if ((m = /^#if\s+(.+)/.exec(t))) {
-      const p = cur(), a = p && evalExpr(m[1]);
-      stack.push({ parent: p, active: a, taken: a });
-    } else if ((m = /^#elif\s+(.+)/.exec(t))) {
-      const f = stack[stack.length - 1];
-      f.active = f.parent && !f.taken && evalExpr(m[1]);
-      f.taken = f.taken || f.active;
-    } else if (/^#else\b/.test(t)) {
-      const f = stack[stack.length - 1];
-      f.active = f.parent && !f.taken;
-      f.taken = true;
-    } else if (/^#endif\b/.test(t)) {
-      stack.pop();
-    } else if ((m = /^#define\s+(\w+)(?:\s+(.*))?/.exec(t))) {
-      if (cur()) { defines.set(m[1], (m[2] ?? '1').trim()); out.push(line); }
-    } else if (cur()) {
-      out.push(line);
-    }
-  }
-  if (stack.length) throw new Error('#if/#endifが釣り合っていない');
-  return out.join('\n');
-}
-
-function assembleLambertFragment(dirLights: number, dirShadows: number, defines: string[]): string {
-  let frag = THREE.ShaderLib.lambert.fragmentShader;
-  frag = resolveIncludes(frag);
-  frag = replaceLightNums(frag, dirLights, dirShadows);
-  frag = unrollLoops(frag);
-  return preprocess(frag, defines);
-}
+const assembleLambertFragment = (dirLights: number, dirShadows: number, defines: string[]): string =>
+  assembleFragment(THREE.ShaderLib.lambert.fragmentShader, dirLights, dirShadows, defines);
 
 describe('dualShadowシェーダーパッチ', () => {
   it('フォールバック関数と2枚構成の分岐が注入される', () => {

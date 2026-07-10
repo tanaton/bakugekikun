@@ -37,12 +37,8 @@ export function stepSim(world: World, dt: number, now: number): void {
   updateBoomLights(world, dt);   pt('boomLight');
   gfx.fireP.update(dt);
   gfx.smokeP.update(dt);         pt('particles');
-  // 川の水面: さざ波テクスチャをゆっくり流し、わずかに揺らす
-  if (world.view.water) {
-    world.view.water.tex.offset.set(
-      sim.simT * 0.008 + 0.02 * Math.sin(sim.simT * 0.5),
-      sim.simT * 0.005 + 0.02 * Math.cos(sim.simT * 0.34));
-  }
+  // 川の水面: 波のスクロールはシェーダー側(patchWaterShader)。時刻だけ渡す
+  if (world.view.water) world.view.water.time.value = sim.simT;
 }
 
 export function startLoop(world: World, input: InputState): void {

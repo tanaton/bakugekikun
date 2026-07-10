@@ -107,6 +107,10 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
     let now = 0;
     for (let i = 0; i < 10; i++) { now += 16; stepSim(world, 0.016, now); }
 
+    // 水面: stepSimがシェーダーuniformの時刻を進める(BAKUGEKI-01には水域がある)
+    expect(world.view.water).not.toBeNull();
+    expect(world.view.water!.time.value).toBeCloseTo(world.sim.simT, 10);
+
     // 画面中央へ爆撃指定 → ミサイルが生まれる
     requestStrike(world, 640, 360);
     expect(world.sim.missiles.length).toBe(1);

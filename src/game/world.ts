@@ -100,5 +100,6 @@ export function applyTime(world: World, mode: TimeMode): void {
     world.view.water.mat.color.set(T.ground.waterSurf);
     world.view.water.mat.specular.set(T.ground.waterSpec);
     world.view.water.mat.shininess = T.ground.waterShine;
+    world.view.water.skyColor.value.set(T.ground.waterSky);
   }
 }

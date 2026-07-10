@@ -149,6 +149,7 @@ function makeDisposer(scene: THREE.Scene, group: THREE.Group): () => void {
         const lm = m as THREE.MeshLambertMaterial;
         if (lm.map) lm.map.dispose();
         if (lm.emissiveMap) lm.emissiveMap.dispose();
+        if (lm.normalMap) lm.normalMap.dispose();   // 水面の法線マップ
         m.dispose();
       });
     });

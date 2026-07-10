@@ -44,14 +44,18 @@ export class DebrisSystem {
 
   spawn(terrain: Terrain, x: number, y: number, z: number, pow: number): void {
     const a = Math.random() * Math.PI * 2, sp = (0.3 + Math.random() * 0.7) * pow;
-    const d = this.pool.spawn({
-      slot: 0,
-      x, y, z, gx: x, gz: z, gy: terrain.h(x, z),
-      vx: Math.cos(a) * sp, vy: pow * (0.5 + Math.random() * 0.9), vz: Math.sin(a) * sp,
-      rx: Math.random() * 3, ry: Math.random() * 3, rz: Math.random() * 3,
-      rvx: (Math.random() - 0.5) * 12, rvz: (Math.random() - 0.5) * 12,
-      size: 0.9 + Math.random() * 3.2, life: 2.2 + Math.random() * 2.4, age: 0,
-    });
+    // レコードは死んだ瓦礫のものを使い回す(全フィールドをここで書き直す)
+    const d = this.pool.take() ?? {
+      slot: 0, x: 0, y: 0, z: 0, gx: 0, gz: 0, gy: 0, vx: 0, vy: 0, vz: 0,
+      rx: 0, ry: 0, rz: 0, rvx: 0, rvz: 0, size: 0, life: 0, age: 0,
+    };
+    d.x = x; d.y = y; d.z = z;
+    d.gx = x; d.gz = z; d.gy = terrain.h(x, z);
+    d.vx = Math.cos(a) * sp; d.vy = pow * (0.5 + Math.random() * 0.9); d.vz = Math.sin(a) * sp;
+    d.rx = Math.random() * 3; d.ry = Math.random() * 3; d.rz = Math.random() * 3;
+    d.rvx = (Math.random() - 0.5) * 12; d.rvz = (Math.random() - 0.5) * 12;
+    d.size = 0.9 + Math.random() * 3.2; d.life = 2.2 + Math.random() * 2.4; d.age = 0;
+    this.pool.spawn(d);
     this.mesh.setColorAt(d.slot, pick(DEBRIS_COLS, Math.random));
     this.mesh.instanceColor!.needsUpdate = true;   // 色が変わるのはspawn時だけ
   }

@@ -87,34 +87,39 @@ export function detonate(world: World, p: { x: number; y: number; z: number }, R
   const cnt = (n: number): number => Math.max(4, Math.round(n * f));
   for (let i = 0; i < cnt(45); i++) {
     const a = Math.random() * Math.PI * 2, sp = Math.random() * 50 * sf;
-    gfx.fireP.spawn({ x: p.x, y: gy + 6, z: p.z, gy,
-      vx: Math.cos(a) * sp, vy: (60 + Math.random() * 120) * sf, vz: Math.sin(a) * sp,
-      life: 0.35 + Math.random() * 0.3, size: (20 + Math.random() * 18) * sf, drag: 1.2,
-      r: 1, g: 0.93, b: 0.72 });
+    const fp = gfx.fireP.spawn(p.x, gy + 6, p.z, 1, 0.93, 0.72);
+    fp.gy = gy;
+    fp.vx = Math.cos(a) * sp; fp.vy = (60 + Math.random() * 120) * sf; fp.vz = Math.sin(a) * sp;
+    fp.life = 0.35 + Math.random() * 0.3; fp.size = (20 + Math.random() * 18) * sf; fp.drag = 1.2;
   }
   for (let i = 0; i < cnt(150); i++) {
     const a = Math.random() * Math.PI * 2, up = Math.random();
     const sp = (30 + Math.random() * 140) * sf;
-    gfx.fireP.spawn({ x: p.x, y: gy + 5, z: p.z, gy,
-      vx: Math.cos(a) * sp * (1 - up * 0.5), vy: (40 + up * 200) * sf, vz: Math.sin(a) * sp * (1 - up * 0.5),
-      life: 0.6 + Math.random() * 0.8, size: (14 + Math.random() * 16) * sf, drag: 1.0, growth: 1.2,
-      r: 1, g: 0.45 + Math.random() * 0.25, b: 0.1 });
+    const fp = gfx.fireP.spawn(p.x, gy + 5, p.z, 1, 0.45 + Math.random() * 0.25, 0.1);
+    fp.gy = gy;
+    fp.vx = Math.cos(a) * sp * (1 - up * 0.5); fp.vy = (40 + up * 200) * sf;
+    fp.vz = Math.sin(a) * sp * (1 - up * 0.5);
+    fp.life = 0.6 + Math.random() * 0.8; fp.size = (14 + Math.random() * 16) * sf;
+    fp.drag = 1.0; fp.growth = 1.2;
   }
   for (let i = 0; i < cnt(90); i++) {
     const a = Math.random() * Math.PI * 2, rr = Math.random() * 25 * f;
-    gfx.fireP.spawn({ x: p.x + Math.cos(a) * rr, y: gy + 8, z: p.z + Math.sin(a) * rr, gy,
-      vx: Math.cos(a) * 18, vy: (70 + Math.random() * 130) * sf, vz: Math.sin(a) * 18,
-      life: 1.0 + Math.random() * 0.9, size: (18 + Math.random() * 20) * sf, drag: 1.4, growth: 1.6,
-      r: 0.85, g: 0.22, b: 0.06 });
+    const fp = gfx.fireP.spawn(p.x + Math.cos(a) * rr, gy + 8, p.z + Math.sin(a) * rr, 0.85, 0.22, 0.06);
+    fp.gy = gy;
+    fp.vx = Math.cos(a) * 18; fp.vy = (70 + Math.random() * 130) * sf; fp.vz = Math.sin(a) * 18;
+    fp.life = 1.0 + Math.random() * 0.9; fp.size = (18 + Math.random() * 20) * sf;
+    fp.drag = 1.4; fp.growth = 1.6;
   }
   // --- 火の粉スパーク ---
   for (let i = 0; i < cnt(160); i++) {
     const a = Math.random() * Math.PI * 2, up = Math.random();
     const sp = (60 + Math.random() * 220) * sf;
-    gfx.fireP.spawn({ x: p.x, y: gy + 4, z: p.z, gy,
-      vx: Math.cos(a) * sp * (1 - up * 0.6), vy: (60 + up * 260) * sf, vz: Math.sin(a) * sp * (1 - up * 0.6),
-      life: 0.9 + Math.random() * 1.6, size: 3.5 + Math.random() * 5, grav: 220, drag: 0.5,
-      r: 1, g: 0.6 + Math.random() * 0.3, b: 0.18 });
+    const fp = gfx.fireP.spawn(p.x, gy + 4, p.z, 1, 0.6 + Math.random() * 0.3, 0.18);
+    fp.gy = gy;
+    fp.vx = Math.cos(a) * sp * (1 - up * 0.6); fp.vy = (60 + up * 260) * sf;
+    fp.vz = Math.sin(a) * sp * (1 - up * 0.6);
+    fp.life = 0.9 + Math.random() * 1.6; fp.size = 3.5 + Math.random() * 5;
+    fp.grav = 220; fp.drag = 0.5;
   }
   // --- 3D瓦礫 ---
   for (let i = 0; i < cnt(55); i++)
@@ -124,18 +129,22 @@ export function detonate(world: World, p: { x: number; y: number; z: number }, R
   for (let i = 0; i < cnt(70); i++) {
     const a = Math.random() * Math.PI * 2;
     const sp = (55 + Math.random() * 110) * sf;
-    gfx.smokeP.spawn({ x: p.x + Math.cos(a) * 18 * f, y: gy + 2 + Math.random() * 6, z: p.z + Math.sin(a) * 18 * f, gy,
-      vx: Math.cos(a) * sp, vy: 4 + Math.random() * 10, vz: Math.sin(a) * sp,
-      life: 1.6 + Math.random() * 1.6, size: (20 + Math.random() * 22) * sf, growth: 2.6, drag: 1.1, fadeIn: 0.1,
-      r: 0.4, g: 0.35, b: 0.29, baseAlpha: 0.55 });
+    const sm = gfx.smokeP.spawn(p.x + Math.cos(a) * 18 * f, gy + 2 + Math.random() * 6,
+      p.z + Math.sin(a) * 18 * f, 0.4, 0.35, 0.29);
+    sm.gy = gy;
+    sm.vx = Math.cos(a) * sp; sm.vy = 4 + Math.random() * 10; sm.vz = Math.sin(a) * sp;
+    sm.life = 1.6 + Math.random() * 1.6; sm.size = (20 + Math.random() * 22) * sf;
+    sm.growth = 2.6; sm.drag = 1.1; sm.fadeIn = 0.1; sm.baseAlpha = 0.55;
   }
   // --- 煙柱(きのこ雲) ---
   for (let i = 0; i < cnt(85); i++) {
     const a = Math.random() * Math.PI * 2, rr = Math.random() * R * 0.4;
-    gfx.smokeP.spawn({ x: p.x + Math.cos(a) * rr, y: gy + 6 + Math.random() * 26, z: p.z + Math.sin(a) * rr, gy,
-      vx: Math.cos(a) * 10, vy: (34 + Math.random() * 62) * sf, vz: Math.sin(a) * 10,
-      life: 4 + Math.random() * 3.5, size: (30 + Math.random() * 36) * sf, growth: 2.6,
-      drag: 0.3, fadeIn: 0.3, r: 0.2, g: 0.185, b: 0.18, baseAlpha: 0.66 });
+    const sm = gfx.smokeP.spawn(p.x + Math.cos(a) * rr, gy + 6 + Math.random() * 26,
+      p.z + Math.sin(a) * rr, 0.2, 0.185, 0.18);
+    sm.gy = gy;
+    sm.vx = Math.cos(a) * 10; sm.vy = (34 + Math.random() * 62) * sf; sm.vz = Math.sin(a) * 10;
+    sm.life = 4 + Math.random() * 3.5; sm.size = (30 + Math.random() * 36) * sf;
+    sm.growth = 2.6; sm.drag = 0.3; sm.fadeIn = 0.3; sm.baseAlpha = 0.66;
   }
   // --- 二次爆発の予約(大型弾のみ) ---
   if (f > 0.75) {
@@ -162,18 +171,20 @@ export function miniBoom(world: World, d: { x: number; z: number }): void {
   growFx(world, gfx.fx.sphereAdd(0xff7a30, 0.95), d.x, gy + 6, d.z, 0.5, 4, 42, 0.5, 0.95, 1.2);
   for (let i = 0; i < 45; i++) {
     const a = Math.random() * Math.PI * 2, sp = 25 + Math.random() * 90;
-    gfx.fireP.spawn({ x: d.x, y: gy + 4, z: d.z, gy,
-      vx: Math.cos(a) * sp, vy: 50 + Math.random() * 140, vz: Math.sin(a) * sp,
-      life: 0.5 + Math.random() * 0.8, size: 8 + Math.random() * 12, grav: 120, drag: 0.8,
-      r: 1, g: 0.5 + Math.random() * 0.3, b: 0.12 });
+    const fp = gfx.fireP.spawn(d.x, gy + 4, d.z, 1, 0.5 + Math.random() * 0.3, 0.12);
+    fp.gy = gy;
+    fp.vx = Math.cos(a) * sp; fp.vy = 50 + Math.random() * 140; fp.vz = Math.sin(a) * sp;
+    fp.life = 0.5 + Math.random() * 0.8; fp.size = 8 + Math.random() * 12;
+    fp.grav = 120; fp.drag = 0.8;
   }
   for (let i = 0; i < 14; i++) debris.spawn(city.terrain, d.x, gy + 3, d.z, 70 + Math.random() * 80);
   for (let i = 0; i < 12; i++) {
     const a = Math.random() * Math.PI * 2;
-    gfx.smokeP.spawn({ x: d.x, y: gy + 5, z: d.z, gy,
-      vx: Math.cos(a) * 20, vy: 22 + Math.random() * 30, vz: Math.sin(a) * 20,
-      life: 2.5 + Math.random() * 2, size: 18 + Math.random() * 18, growth: 2.2, drag: 0.4, fadeIn: 0.2,
-      r: 0.22, g: 0.2, b: 0.19, baseAlpha: 0.55 });
+    const sm = gfx.smokeP.spawn(d.x, gy + 5, d.z, 0.22, 0.2, 0.19);
+    sm.gy = gy;
+    sm.vx = Math.cos(a) * 20; sm.vy = 22 + Math.random() * 30; sm.vz = Math.sin(a) * 20;
+    sm.life = 2.5 + Math.random() * 2; sm.size = 18 + Math.random() * 18;
+    sm.growth = 2.2; sm.drag = 0.4; sm.fadeIn = 0.2; sm.baseAlpha = 0.55;
   }
   destroyAround(world, d, 26);
   world.sim.shake += 1.2;
@@ -192,26 +203,31 @@ export function updateNukeEmitters(world: World, dt: number): void {
     const nStem = e.t < e.dur * 0.7 ? 3 : 1;
     for (let j = 0; j < nStem; j++) {
       const a = Math.random() * Math.PI * 2, rr = Math.random() * 55;
-      gfx.smokeP.spawn({ x: e.x + Math.cos(a) * rr, y: e.gy + 10 + Math.random() * 90, z: e.z + Math.sin(a) * rr, gy: e.gy,
-        vx: Math.cos(a) * 6, vy: 95 + Math.random() * 85, vz: Math.sin(a) * 6,
-        life: 5 + Math.random() * 3, size: 42 + Math.random() * 40, growth: 1.8, drag: 0.12, fadeIn: 0.3,
-        r: 0.34 + Math.random() * 0.06, g: 0.29, b: 0.25, baseAlpha: 0.7 });
+      const sm = gfx.smokeP.spawn(e.x + Math.cos(a) * rr, e.gy + 10 + Math.random() * 90,
+        e.z + Math.sin(a) * rr, 0.34 + Math.random() * 0.06, 0.29, 0.25);
+      sm.gy = e.gy;
+      sm.vx = Math.cos(a) * 6; sm.vy = 95 + Math.random() * 85; sm.vz = Math.sin(a) * 6;
+      sm.life = 5 + Math.random() * 3; sm.size = 42 + Math.random() * 40;
+      sm.growth = 1.8; sm.drag = 0.12; sm.fadeIn = 0.3; sm.baseAlpha = 0.7;
     }
     // 傘(キャップ): 上空でドーナツ状に広がる
     for (let j = 0; j < 2; j++) {
       const a = Math.random() * Math.PI * 2, rr = 40 + Math.random() * 90 + k * 140;
-      gfx.smokeP.spawn({ x: e.x + Math.cos(a) * rr, y: e.gy + 430 + Math.random() * 130, z: e.z + Math.sin(a) * rr, gy: e.gy,
-        vx: Math.cos(a) * (26 + k * 12), vy: 12 + Math.random() * 22, vz: Math.sin(a) * (26 + k * 12),
-        life: 6 + Math.random() * 4, size: 62 + Math.random() * 55, growth: 1.5, drag: 0.25, fadeIn: 0.5,
-        r: 0.3, g: 0.27, b: 0.25, baseAlpha: 0.62 });
+      const sm = gfx.smokeP.spawn(e.x + Math.cos(a) * rr, e.gy + 430 + Math.random() * 130,
+        e.z + Math.sin(a) * rr, 0.3, 0.27, 0.25);
+      sm.gy = e.gy;
+      sm.vx = Math.cos(a) * (26 + k * 12); sm.vy = 12 + Math.random() * 22; sm.vz = Math.sin(a) * (26 + k * 12);
+      sm.life = 6 + Math.random() * 4; sm.size = 62 + Math.random() * 55;
+      sm.growth = 1.5; sm.drag = 0.25; sm.fadeIn = 0.5; sm.baseAlpha = 0.62;
     }
     // 内部の発光(最初の3秒は雲が中から焼ける)
     if (e.t < 3) {
       const gh = e.gy + 80 + Math.random() * 380 * Math.min(1, e.t / 2);
-      gfx.fireP.spawn({ x: e.x + (Math.random() - 0.5) * 70, y: gh, z: e.z + (Math.random() - 0.5) * 70, gy: e.gy,
-        vx: 0, vy: 40 + Math.random() * 50, vz: 0,
-        life: 0.5 + Math.random() * 0.4, size: 30 + Math.random() * 40,
-        r: 1, g: 0.5, b: 0.16, baseAlpha: 0.55 });
+      const fp = gfx.fireP.spawn(e.x + (Math.random() - 0.5) * 70, gh,
+        e.z + (Math.random() - 0.5) * 70, 1, 0.5, 0.16);
+      fp.gy = e.gy;
+      fp.vy = 40 + Math.random() * 50;
+      fp.life = 0.5 + Math.random() * 0.4; fp.size = 30 + Math.random() * 40; fp.baseAlpha = 0.55;
     }
   }
 }
@@ -253,18 +269,22 @@ export function detonateNuke(world: World, p: { x: number; y: number; z: number 
   for (let i = 0; i < 150; i++) {
     const a = Math.random() * Math.PI * 2;
     const sp = 130 + Math.random() * 240;
-    gfx.smokeP.spawn({ x: p.x + Math.cos(a) * 40, y: gy + 3 + Math.random() * 12, z: p.z + Math.sin(a) * 40, gy,
-      vx: Math.cos(a) * sp, vy: 6 + Math.random() * 16, vz: Math.sin(a) * sp,
-      life: 2.2 + Math.random() * 2.2, size: 30 + Math.random() * 30, growth: 2.6, drag: 0.9, fadeIn: 0.1,
-      r: 0.42, g: 0.37, b: 0.3, baseAlpha: 0.6 });
+    const sm = gfx.smokeP.spawn(p.x + Math.cos(a) * 40, gy + 3 + Math.random() * 12,
+      p.z + Math.sin(a) * 40, 0.42, 0.37, 0.3);
+    sm.gy = gy;
+    sm.vx = Math.cos(a) * sp; sm.vy = 6 + Math.random() * 16; sm.vz = Math.sin(a) * sp;
+    sm.life = 2.2 + Math.random() * 2.2; sm.size = 30 + Math.random() * 30;
+    sm.growth = 2.6; sm.drag = 0.9; sm.fadeIn = 0.1; sm.baseAlpha = 0.6;
   }
   for (let i = 0; i < 250; i++) {
     const a = Math.random() * Math.PI * 2, up = Math.random();
     const sp = 120 + Math.random() * 420;
-    gfx.fireP.spawn({ x: p.x, y: gy + 6, z: p.z, gy,
-      vx: Math.cos(a) * sp * (1 - up * 0.6), vy: 80 + up * 380, vz: Math.sin(a) * sp * (1 - up * 0.6),
-      life: 1.2 + Math.random() * 2, size: 4 + Math.random() * 7, grav: 200, drag: 0.4,
-      r: 1, g: 0.62 + Math.random() * 0.3, b: 0.2 });
+    const fp = gfx.fireP.spawn(p.x, gy + 6, p.z, 1, 0.62 + Math.random() * 0.3, 0.2);
+    fp.gy = gy;
+    fp.vx = Math.cos(a) * sp * (1 - up * 0.6); fp.vy = 80 + up * 380;
+    fp.vz = Math.sin(a) * sp * (1 - up * 0.6);
+    fp.life = 1.2 + Math.random() * 2; fp.size = 4 + Math.random() * 7;
+    fp.grav = 200; fp.drag = 0.4;
   }
   for (let i = 0; i < 120; i++)
     debris.spawn(city.terrain, p.x + (Math.random() - 0.5) * 60, gy + 5 + Math.random() * 20,

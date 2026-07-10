@@ -114,10 +114,11 @@ export function updateCollapses(world: World, dt: number): void {
           const px = b.x + c.dirx * dd + (Math.random() - 0.5) * b.sx * 1.5;
           const pz = b.z + c.dirz * dd + (Math.random() - 0.5) * b.sz * 1.5;
           const py = city.terrain.h(px, pz);
-          gfx.smokeP.spawn({ x: px, y: py + 2, z: pz, gy: py,
-            vx: (Math.random() - 0.5) * 30, vy: 10 + Math.random() * 24, vz: (Math.random() - 0.5) * 30,
-            life: 2.5 + Math.random() * 2, size: 18 + Math.random() * 20, growth: 2.4, drag: 0.6, fadeIn: 0.15,
-            r: 0.42, g: 0.38, b: 0.32, baseAlpha: 0.6 });
+          const sm = gfx.smokeP.spawn(px, py + 2, pz, 0.42, 0.38, 0.32);
+          sm.gy = py;
+          sm.vx = (Math.random() - 0.5) * 30; sm.vy = 10 + Math.random() * 24; sm.vz = (Math.random() - 0.5) * 30;
+          sm.life = 2.5 + Math.random() * 2; sm.size = 18 + Math.random() * 20;
+          sm.growth = 2.4; sm.drag = 0.6; sm.fadeIn = 0.15; sm.baseAlpha = 0.6;
         }
         const ix = b.x + c.dirx * b.h * 0.55, iz = b.z + c.dirz * b.h * 0.55;
         const iy = city.terrain.h(ix, iz);
@@ -152,10 +153,11 @@ export function updateCollapses(world: World, dt: number): void {
 // 崩壊開始時の粉塵
 function collapseDust(world: World, b: Building): void {
   for (let i = 0; i < 6; i++) {
-    world.gfx.smokeP.spawn({
-      x: b.x + (Math.random() - 0.5) * b.sx, y: b.gy + 3, z: b.z + (Math.random() - 0.5) * b.sz, gy: b.gy,
-      vx: (Math.random() - 0.5) * 26, vy: 8 + Math.random() * 18, vz: (Math.random() - 0.5) * 26,
-      life: 2.4 + Math.random() * 2, size: 16 + Math.random() * 14, growth: 2,
-      drag: 0.5, fadeIn: 0.3, r: 0.34, g: 0.31, b: 0.28, baseAlpha: 0.5 });
+    const sm = world.gfx.smokeP.spawn(b.x + (Math.random() - 0.5) * b.sx, b.gy + 3,
+      b.z + (Math.random() - 0.5) * b.sz, 0.34, 0.31, 0.28);
+    sm.gy = b.gy;
+    sm.vx = (Math.random() - 0.5) * 26; sm.vy = 8 + Math.random() * 18; sm.vz = (Math.random() - 0.5) * 26;
+    sm.life = 2.4 + Math.random() * 2; sm.size = 16 + Math.random() * 14;
+    sm.growth = 2; sm.drag = 0.5; sm.fadeIn = 0.3; sm.baseAlpha = 0.5;
   }
 }

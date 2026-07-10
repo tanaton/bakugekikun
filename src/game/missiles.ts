@@ -140,13 +140,12 @@ export function updateMissiles(world: World, dt: number, now: number): void {
     m.trailT += dt;
     while (m.trailT > 0.008) {
       m.trailT -= 0.008;
-      gfx.fireP.spawn({ x: m.pos.x + (Math.random() - 0.5) * 3, y: m.pos.y + (Math.random() - 0.5) * 3,
-        z: m.pos.z + (Math.random() - 0.5) * 3,
-        vx: 0, vy: 0, vz: 0, life: 0.5 + Math.random() * 0.3, size: 9 + Math.random() * 7,
-        r: 1, g: 0.62, b: 0.25, baseAlpha: 0.8 });
-      gfx.smokeP.spawn({ x: m.pos.x, y: m.pos.y, z: m.pos.z,
-        vx: (Math.random() - 0.5) * 4, vy: 2, vz: (Math.random() - 0.5) * 4,
-        life: 2.2, size: 14, growth: 2.5, r: 0.32, g: 0.32, b: 0.35, baseAlpha: 0.4 });
+      const fp = gfx.fireP.spawn(m.pos.x + (Math.random() - 0.5) * 3,
+        m.pos.y + (Math.random() - 0.5) * 3, m.pos.z + (Math.random() - 0.5) * 3, 1, 0.62, 0.25);
+      fp.life = 0.5 + Math.random() * 0.3; fp.size = 9 + Math.random() * 7; fp.baseAlpha = 0.8;
+      const sm = gfx.smokeP.spawn(m.pos.x, m.pos.y, m.pos.z, 0.32, 0.32, 0.35);
+      sm.vx = (Math.random() - 0.5) * 4; sm.vy = 2; sm.vz = (Math.random() - 0.5) * 4;
+      sm.life = 2.2; sm.size = 14; sm.growth = 2.5; sm.baseAlpha = 0.4;
     }
     if (m.marker) m.marker.scale.set(mSc, mSc, 1);   // マーカー点滅(不透明度は共有マテリアルで設定済み)
     // クラスター弾: 上空で子弾に分裂(分裂後の親は即座に配列から消える)
@@ -155,10 +154,9 @@ export function updateMissiles(world: World, dt: number, now: number): void {
       removeMissile(world, m);
       for (let j = 0; j < 24; j++) {                       // 分裂の閃光
         const a = Math.random() * Math.PI * 2, sp = 20 + Math.random() * 60;
-        gfx.fireP.spawn({ x: m.pos.x, y: m.pos.y, z: m.pos.z,
-          vx: Math.cos(a) * sp, vy: (Math.random() - 0.5) * 40, vz: Math.sin(a) * sp,
-          life: 0.35 + Math.random() * 0.3, size: 7 + Math.random() * 8,
-          r: 1, g: 0.8, b: 0.45 });
+        const fp = gfx.fireP.spawn(m.pos.x, m.pos.y, m.pos.z, 1, 0.8, 0.45);
+        fp.vx = Math.cos(a) * sp; fp.vy = (Math.random() - 0.5) * 40; fp.vz = Math.sin(a) * sp;
+        fp.life = 0.35 + Math.random() * 0.3; fp.size = 7 + Math.random() * 8;
       }
       playPop();
       const n = sp2.nMin + Math.floor(Math.random() * (sp2.nMax - sp2.nMin + 1));

@@ -22,18 +22,12 @@ const P_FRAG = `
     gl_FragColor = vec4(vC, a);
   }`;
 
-// spawn時に渡すパラメータ(省略時はデフォルト)
-export interface ParticleSpec {
+// 粒子1個の状態。レコードはプールが回収・再利用する(spawnごとにオブジェクトを確保しない)。
+// 色はレコードに持たない(寿命を通じて不変なのでspawn時にバッファへ直書きする)
+export interface Particle extends Slotted {
   x: number; y: number; z: number;
   vx: number; vy: number; vz: number;
   life: number; size: number;
-  r: number; g: number; b: number;
-  grav?: number; drag?: number; fadeIn?: number; growth?: number;
-  baseAlpha?: number; gy?: number;
-}
-
-// spawnで全フィールドを必須化した内部表現(ParticleSpecのオブジェクトを補完して使い回す)
-interface Particle extends Slotted, ParticleSpec {
   age: number;
   grav: number; drag: number; fadeIn: number; growth: number;
   baseAlpha: number; gy: number;
@@ -86,18 +80,25 @@ export class ParticlePool {
     this.sizeAttr.needsUpdate = true;
   }
 
-  spawn(s: ParticleSpec): void {
-    // 呼び出し側のリテラルをそのまま粒子として使う(spawnはホットパスなので確保は増やさない)。
-    // 省略可能フィールドはここでデフォルトを埋めて必須化する
-    const p = s as Particle;
-    p.age = 0;
-    p.grav = s.grav ?? 0; p.drag = s.drag ?? 0; p.fadeIn = s.fadeIn ?? 0; p.growth = s.growth ?? 0;
-    p.baseAlpha = s.baseAlpha ?? 1; p.gy = s.gy ?? 0;
+  // 粒子を確保してレコードを返す。呼び出し側は返り値のフィールド(速度・寿命・サイズなど)を
+  // 直接埋める(spawnはホットパスなのでspecオブジェクトを確保させない)。
+  // レコードは死んだ粒子のものを使い回すため、全フィールドをここでデフォルトへ戻す
+  spawn(x: number, y: number, z: number, r: number, g: number, b: number): Particle {
+    const p = this.pool.take() ?? {
+      slot: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 1, size: 0, age: 0,
+      grav: 0, drag: 0, fadeIn: 0, growth: 0, baseAlpha: 1, gy: 0,
+    };
+    p.x = x; p.y = y; p.z = z;
+    p.vx = 0; p.vy = 0; p.vz = 0;
+    p.life = 1; p.size = 0; p.age = 0;
+    p.grav = 0; p.drag = 0; p.fadeIn = 0; p.growth = 0;
+    p.baseAlpha = 1; p.gy = 0;
     this.pool.spawn(p);
     // 色は寿命を通じて不変なのでspawn時に1回だけ書く(毎フレームのバッファ転送を省く)
-    this.col[p.slot * 3] = s.r; this.col[p.slot * 3 + 1] = s.g; this.col[p.slot * 3 + 2] = s.b;
+    this.col[p.slot * 3] = r; this.col[p.slot * 3 + 1] = g; this.col[p.slot * 3 + 2] = b;
     if (p.slot < this.colLo) this.colLo = p.slot;
     if (p.slot > this.colHi) this.colHi = p.slot;
+    return p;
   }
 
   update(dt: number): void {

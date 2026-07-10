@@ -44,6 +44,26 @@ describe('SlotPool', () => {
     for (const p of pool.list) expect(p.id).toBeGreaterThanOrEqual(50);
   });
 
+  it('除去された個体のレコードはtakeで再利用できる', () => {
+    const pool = new SlotPool<Item>(4);
+    expect(pool.take()).toBeUndefined();          // 回収前は空
+    const a = pool.spawn(item(0));
+    const b = pool.spawn(item(1));
+    pool.sweep(p => p !== a);                     // aを除去 → 回収される
+    expect(pool.take()).toBe(a);                  // 同一レコードが返る(新規確保なし)
+    expect(pool.take()).toBeUndefined();
+    pool.clear();                                 // clearでも生存個体を回収する
+    expect(pool.take()).toBe(b);
+  });
+
+  it('スロットを奪われた個体のレコードも回収される', () => {
+    const pool = new SlotPool<Item>(1);
+    const a = pool.spawn(item(0));
+    pool.spawn(item(1));                          // aのslotを奪う
+    pool.sweep(() => true);                       // aは持ち主不一致で除去
+    expect(pool.take()).toBe(a);
+  });
+
   it('clearで全個体とスロット所有権が消える', () => {
     const pool = new SlotPool<Item>(3);
     pool.spawn(item(0));

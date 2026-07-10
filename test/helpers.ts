@@ -9,7 +9,7 @@ import { SunShadow, TIMES, type TimeMode } from '../src/render/sky';
 // シェーダーパッチ(dualShadow / patchWaterShader)の最終GLSLをnodeで検証するために使う
 
 const includePattern = /^[ \t]*#include +<([\w\d./]+)>/gm;
-export function resolveIncludes(s: string): string {
+function resolveIncludes(s: string): string {
   return s.replace(includePattern, (_m, inc: string) => {
     const c = (THREE.ShaderChunk as unknown as Record<string, string>)[inc];
     if (c === undefined) throw new Error(`unknown chunk: ${inc}`);
@@ -17,7 +17,7 @@ export function resolveIncludes(s: string): string {
   });
 }
 
-export function replaceLightNums(s: string, dirLights: number, dirShadows: number): string {
+function replaceLightNums(s: string, dirLights: number, dirShadows: number): string {
   return s
     .replace(/NUM_DIR_LIGHTS/g, String(dirLights))
     .replace(/NUM_SPOT_LIGHTS/g, '0')
@@ -33,7 +33,7 @@ export function replaceLightNums(s: string, dirLights: number, dirShadows: numbe
 }
 
 const unrollLoopPattern = /#pragma unroll_loop_start\s+for\s*\(\s*int\s+i\s*=\s*(\d+)\s*;\s*i\s*<\s*(\d+)\s*;\s*i\s*\+\+\s*\)\s*{([\s\S]+?)}\s+#pragma unroll_loop_end/g;
-export function unrollLoops(s: string): string {
+function unrollLoops(s: string): string {
   return s.replace(unrollLoopPattern, (_m, start: string, end: string, snippet: string) => {
     let out = '';
     for (let i = parseInt(start); i < parseInt(end); i++) {
@@ -44,7 +44,7 @@ export function unrollLoops(s: string): string {
 }
 
 // 簡易プリプロセッサ: #if/#ifdef/#elif/#else/#endifを評価して有効枝だけを残す
-export function preprocess(src: string, initialDefines: string[]): string {
+function preprocess(src: string, initialDefines: string[]): string {
   const defines = new Map<string, string>(initialDefines.map(d => [d, '1']));
   type Frame = { parent: boolean; active: boolean; taken: boolean };
   const stack: Frame[] = [];
@@ -90,13 +90,21 @@ export function preprocess(src: string, initialDefines: string[]): string {
   return out.join('\n');
 }
 
-// フラグメントシェーダー原文(パッチ適用後でもよい)を最終GLSLへ組み立てる
+// フラグメントシェーダー原文(パッチ適用後でもよい)を最終GLSLへ組み立てる。
+// パッチの副作用でGLSLが壊れる系(置換漏れ・波括弧の欠け)はここで一括検出するので、
+// 各テストで個別にアサートしなくてよい
 export function assembleFragment(frag: string, dirLights: number, dirShadows: number,
     defines: string[]): string {
   frag = resolveIncludes(frag);
   frag = replaceLightNums(frag, dirLights, dirShadows);
   frag = unrollLoops(frag);
-  return preprocess(frag, defines);
+  frag = preprocess(frag, defines);
+  if (frag.includes('#include <')) throw new Error('未解決の#includeが残っている');
+  if (frag.includes('UNROLLED_LOOP_INDEX')) throw new Error('ループ展開の置換漏れ');
+  if ((frag.match(/{/g) ?? []).length !== (frag.match(/}/g) ?? []).length) {
+    throw new Error('波括弧が釣り合っていない');
+  }
+  return frag;
 }
 
 // 本体(cityGen)と同じストリーム割り当てで地形だけを生成する

@@ -3,13 +3,13 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import type { CityData } from '../src/core/cityGen';
-import { rngFor } from '../src/core/rng';
+import { rngFor, type Rng } from '../src/core/rng';
 import { TIMES } from '../src/render/sky';
 import { buildWaterSurface, FOAM_DIFFUSE_LINE, makeWaterNormalData, MAPN_LINE, OUTGOING_LINE,
   patchFoamShader, patchWaterShader, type WaterView } from '../src/render/water';
 import { assembleFragment, mkTerrain } from './helpers';
 
-const rng = (): ReturnType<typeof rngFor> => rngFor('WATER-TEST', 'waterTex');
+const rng = (): Rng => rngFor('WATER-TEST', 'waterTex');
 
 // RGBA8の1画素を単位法線ベクトルへ戻す
 const decode = (d: Uint8Array, p: number): [number, number, number] =>
@@ -63,9 +63,9 @@ describe('makeWaterNormalData', () => {
 });
 
 describe('patchWaterShader', () => {
-  const mkView = (): { time: { value: number }; skyColor: { value: THREE.Color } } =>
+  const mkView = (): { time: THREE.IUniform<number>; skyColor: THREE.IUniform<THREE.Color> } =>
     ({ time: { value: 0 }, skyColor: { value: new THREE.Color('#9fc8ee') } });
-  const mkShader = (): { uniforms: Record<string, { value: unknown }>; fragmentShader: string } =>
+  const mkShader = (): { uniforms: Record<string, THREE.IUniform>; fragmentShader: string } =>
     ({ uniforms: {}, fragmentShader: THREE.ShaderLib.phong.fragmentShader });
 
   it('uniformは共有オブジェクトがそのまま登録される(値の後書きが効く)', () => {
@@ -93,9 +93,6 @@ describe('patchWaterShader', () => {
     expect(glsl).not.toContain(OUTGOING_LINE);
     // dualShadowパッチと共存し、2枚構成の影サンプリングが残る
     expect(glsl).toContain('bkDualShadow(');
-    // 組み立て漏れなし・波括弧の対応
-    expect(glsl).not.toContain('#include <');
-    expect(glsl.match(/{/g)!.length).toBe(glsl.match(/}/g)!.length);
   });
 
   it('threeの更新でシェーダー原文が変わったらthrowで気付く', () => {
@@ -116,7 +113,7 @@ describe('patchWaterShader', () => {
 });
 
 describe('patchFoamShader', () => {
-  const mkShader = (): { uniforms: Record<string, { value: unknown }>;
+  const mkShader = (): { uniforms: Record<string, THREE.IUniform>;
       vertexShader: string; fragmentShader: string } =>
     ({ uniforms: {}, vertexShader: THREE.ShaderLib.basic.vertexShader,
       fragmentShader: THREE.ShaderLib.basic.fragmentShader });
@@ -128,7 +125,6 @@ describe('patchFoamShader', () => {
     const glsl = assembleFragment(sh.fragmentShader, 0, 0, []);
     expect(glsl).toContain(FOAM_DIFFUSE_LINE);   // 原文の直後に乗算を足す(置換でなく追記)
     expect(glsl).toContain('diffuseColor.a *= vFoam.x');
-    expect(glsl).not.toContain('#include <');
     // 頂点側: 属性の宣言と受け渡し
     expect(sh.vertexShader).toContain('attribute vec2 foamInfo;');
     expect(sh.vertexShader).toContain('vFoam = foamInfo;');
@@ -175,8 +171,10 @@ describe('buildWaterSurface', () => {
         if (i % 2 === 1) expect(info.getX(i)).toBe(0);   // 内周(水側)はフェード0
       }
     }
-    // 時間帯uniformの初期値はプリセットと一致
+    // 色系はパレット適用で初期化される(水面uniform・泡マテリアルとも)
     expect('#' + water.skyColor.value.getHexString()).toBe(TIMES.day.ground.waterSky);
+    expect('#' + water.foamMat.color.getHexString()).toBe(TIMES.day.ground.waterFoam);
+    expect(foam.every(m => m.material === water.foamMat)).toBe(true);
     expect(water.time.value).toBe(0);
     expect(water.mat.normalMap).toBeInstanceOf(THREE.DataTexture);
   });

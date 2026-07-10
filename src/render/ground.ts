@@ -82,9 +82,11 @@ export class GroundView {
     // 部分転送(flush)でY反転とサブ矩形選択の相互作用に踏み込まないよう、テクスチャは
     // 無反転で持ち、UVのV軸を反転して同じ見た目にする(canvas座標=テクスチャ座標になる)
     this.tex.flipY = false;
-    // 分割数は岸の描画品質で決めている: 水域内の地形は岸線で水底(-12)へ沈む(terrain.h)が、
-    // 頂点間隔が粗いと補間で水面(-11.6)より上に浮き、水色に塗った地面が岸沿いに露出する
-    const geo = new THREE.PlaneGeometry(GROUND_WORLD, GROUND_WORLD, 144, 144);
+    // 分割数は岸の描画品質で決めている: 水域内の地形は岸線で水底(WATER_BED_Y)へ沈む
+    // (terrain.h)が、頂点間隔が粗いと補間で水面(WATER_SURFACE_Y)より上に浮き、
+    // 水色に塗った地面が岸沿いに露出する。水域のない街は粗い分割で足りる
+    const segs = city.terrain.feats.some(f => f.type === 'r') ? 144 : 96;
+    const geo = new THREE.PlaneGeometry(GROUND_WORLD, GROUND_WORLD, segs, segs);
     geo.rotateX(-Math.PI / 2);
     const gp = geo.getAttribute('position');
     for (let i = 0; i < gp.count; i++) gp.setY(i, city.terrain.h(gp.getX(i), gp.getZ(i)));

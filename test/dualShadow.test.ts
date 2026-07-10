@@ -31,9 +31,6 @@ describe('dualShadowシェーダーパッチ', () => {
     // 全域ライト(1番)のループ回では影をサンプリングしない。
     // getShadowの直接呼び出しはbkDualShadow内の2回(精細/全域)だけ
     expect(glsl.match(/getShadow\( directionalShadowMap\[/g)).toHaveLength(2);
-    // ループ展開の置換漏れと波括弧の対応
-    expect(glsl).not.toContain('UNROLLED_LOOP_INDEX');
-    expect(glsl.match(/{/g)!.length).toBe(glsl.match(/}/g)!.length);
   });
 
   it('平行光源1灯(通常構成)では従来どおり単独の影になる', () => {

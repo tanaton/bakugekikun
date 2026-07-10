@@ -146,10 +146,9 @@ function makeDisposer(scene: THREE.Scene, group: THREE.Group): () => void {
       const mesh = o as THREE.Mesh;
       if (mesh.geometry) mesh.geometry.dispose();
       forEachMaterial(o, m => {
-        const lm = m as THREE.MeshLambertMaterial;
-        if (lm.map) lm.map.dispose();
-        if (lm.emissiveMap) lm.emissiveMap.dispose();
-        if (lm.normalMap) lm.normalMap.dispose();   // 水面の法線マップ
+        // スロット名の列挙はしない: マテリアルが持つテクスチャを種類を問わず解放する
+        // (map/emissiveMap/normalMap…と増えるたびにここへ足し忘れてリークしないように)
+        for (const v of Object.values(m)) if (v instanceof THREE.Texture) v.dispose();
         m.dispose();
       });
     });

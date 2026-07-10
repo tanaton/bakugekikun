@@ -6,6 +6,7 @@
 
 import { buildCityIndex, generateCityData, type CityData, type CityIndex } from '../core/cityGen';
 import { buildCityView, type CityView } from '../render/cityMeshes';
+import { applyWaterPalette } from '../render/water';
 import type { Gfx } from '../render/gfx';
 import { LIGHT_SCALE, TIMES, type TimeMode } from '../render/sky';
 import { resetNukeFlash } from '../ui/hud';
@@ -96,10 +97,5 @@ export function applyTime(world: World, mode: TimeMode): void {
     m.emissiveIntensity = T.emissive * ((m.userData.eScale as number) || 1);
   }
   world.view.ground.drawGround(T.ground);
-  if (world.view.water) {
-    world.view.water.mat.color.set(T.ground.waterSurf);
-    world.view.water.mat.specular.set(T.ground.waterSpec);
-    world.view.water.mat.shininess = T.ground.waterShine;
-    world.view.water.skyColor.value.set(T.ground.waterSky);
-  }
+  if (world.view.water) applyWaterPalette(world.view.water, T.ground);
 }

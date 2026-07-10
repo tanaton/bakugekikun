@@ -7,16 +7,29 @@
 
 import * as THREE from 'three';
 import type { CityData } from '../core/cityGen';
-import { MAP_HALF } from '../core/config';
+import { MAP_HALF, WATER_SURFACE_Y } from '../core/config';
 import { rngFor, type Rng } from '../core/rng';
 import { bandPt, shorePts, type WaterFeat } from '../core/terrain';
 import type { GroundPalette } from './sky';
 
 export interface WaterView {
   mat: THREE.MeshPhongMaterial;
-  time: { value: number };            // uniform実体(loopが毎フレーム書く)
-  skyColor: { value: THREE.Color };   // uniform実体(時間帯切り替えが書く)
+  foamMat: THREE.MeshBasicMaterial;
+  time: THREE.IUniform<number>;         // uniform実体(loopが毎フレーム書く)
+  skyColor: THREE.IUniform<THREE.Color>; // uniform実体(時間帯切り替えが書く)
 }
+
+// 時間帯パレットの水回りへの適用。マテリアル/uniformとパレットの対応はここに閉じる
+export function applyWaterPalette(view: WaterView, G: GroundPalette): void {
+  view.mat.color.set(G.waterSurf);
+  view.mat.specular.set(G.waterSpec);
+  view.mat.shininess = G.waterShine;
+  view.skyColor.value.set(G.waterSky);
+  view.foamMat.color.set(G.waterFoam);
+}
+
+// 地図の縁でのクランプ(地図外へはみ出す湾の岸線を抑える)。水面と泡で共有
+const cl = (v: number): number => THREE.MathUtils.clamp(v, -MAP_HALF, MAP_HALF);
 
 // タイル可能な水面法線マップの画素データ(RGBA8)。整数波数ベクトルの正弦波の和を
 // 高さ場とし、その解析微分の勾配から法線を作る。波数が整数なのでタイル境界は
@@ -92,8 +105,8 @@ const FRESNEL = /* glsl */`
 // 水面マテリアルのシェーダーパッチ。uniformは共有オブジェクトを渡すので、
 // コンパイル前後を問わず time.value / skyColor.value への書き込みが常に効く
 export function patchWaterShader(
-    sh: { uniforms: Record<string, { value: unknown }>; fragmentShader: string },
-    time: { value: number }, skyColor: { value: THREE.Color }): void {
+    sh: { uniforms: Record<string, THREE.IUniform>; fragmentShader: string },
+    time: THREE.IUniform<number>, skyColor: THREE.IUniform<THREE.Color>): void {
   if (!THREE.ShaderChunk.normal_fragment_maps.includes(MAPN_LINE) ||
       !sh.fragmentShader.includes(OUTGOING_LINE)) {
     throw new Error('patchWaterShader: 想定行がない(threeの更新でシェーダー原文が変わった)');
@@ -118,8 +131,8 @@ export const FOAM_DIFFUSE_LINE = 'vec4 diffuseColor = vec4( diffuse, opacity );'
 // 泡マテリアルのシェーダーパッチ: 頂点属性foamInfo=(外1→内0のフェード, 揺らぎ位相)を
 // 透明度に乗せ、水面と同じ時刻uniformでゆっくり明滅させる
 export function patchFoamShader(
-    sh: { uniforms: Record<string, { value: unknown }>; vertexShader: string; fragmentShader: string },
-    time: { value: number }): void {
+    sh: { uniforms: Record<string, THREE.IUniform>; vertexShader: string; fragmentShader: string },
+    time: THREE.IUniform<number>): void {
   if (!sh.fragmentShader.includes(FOAM_DIFFUSE_LINE)) {
     throw new Error('patchFoamShader: 想定行がない(threeの更新でシェーダー原文が変わった)');
   }
@@ -136,7 +149,6 @@ export function patchFoamShader(
 // 岸線(inset 0)と水側(inset -FOAM_W)の点列を結ぶ帯ジオメトリ。
 // 岸線サンプラを水面と共用するので、泡は必ず岸のきわに乗る
 function makeFoamGeometry(f: WaterFeat): THREE.BufferGeometry {
-  const S = MAP_HALF, cl = (v: number): number => THREE.MathUtils.clamp(v, -S, S);
   const outer = shorePts(f, 0), inner = shorePts(f, -FOAM_W);
   const n = outer.length;
   const pos = new Float32Array(n * 2 * 3);
@@ -144,7 +156,7 @@ function makeFoamGeometry(f: WaterFeat): THREE.BufferGeometry {
   for (let i = 0; i < n; i++) {
     const o = outer[i], q = inner[i];
     // 地図の縁で水面がクランプされる列は泡を消す(縁に沿った白線を出さない)
-    const fade = Math.max(Math.abs(o.x), Math.abs(o.z), Math.abs(q.x), Math.abs(q.z)) > S ? 0 : 1;
+    const fade = Math.max(Math.abs(o.x), Math.abs(o.z), Math.abs(q.x), Math.abs(q.z)) > MAP_HALF ? 0 : 1;
     pos.set([cl(o.x), 0, cl(o.z), cl(q.x), 0, cl(q.z)], i * 6);
     info.set([fade, i * 0.9, 0, i * 0.9], i * 4);
   }
@@ -167,20 +179,19 @@ export function buildWaterSurface(city: CityData, group: THREE.Group, G: GroundP
   const tex = makeWaterNormalTexture(rngFor(city.seed, 'waterTex'));
   tex.repeat.set(1 / 90, 1 / 90);   // 法線マップ1タイル=世界90m
   const time = { value: 0 };
-  const skyColor = { value: new THREE.Color(G.waterSky) };
+  const skyColor = { value: new THREE.Color() };
   // Phong+法線マップで太陽のスペキュラをさざ波に沿ってきらめかせる
   const mat = new THREE.MeshPhongMaterial({
-    color: G.waterSurf,
     normalMap: tex, normalScale: new THREE.Vector2(0.9, 0.9),
-    specular: new THREE.Color(G.waterSpec), shininess: G.waterShine,
   });
   mat.onBeforeCompile = (sh): void => patchWaterShader(sh, time, skyColor);
   // 岸の泡(全河川で1マテリアル共有。ライティング・影を受けないBasic)
   const foamMat = new THREE.MeshBasicMaterial({
-    color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide,
+    transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide,
   });
   foamMat.onBeforeCompile = (sh): void => patchFoamShader(sh, time);
-  const S = MAP_HALF, cl = (v: number): number => THREE.MathUtils.clamp(v, -S, S);
+  const view: WaterView = { mat, foamMat, time, skyColor };
+  applyWaterPalette(view, G);   // 色系はすべてパレット適用に一本化
   let li = 0;   // 川同士の重なりでZファイティングしないよう1枚ごとに高さをずらす
   for (const f of feats) {
     const shape = new THREE.Shape();
@@ -190,18 +201,18 @@ export function buildWaterSurface(city: CityData, group: THREE.Group, G: GroundP
       if (i) shape.lineTo(px, -pz); else shape.moveTo(px, -pz);
     });
     if (f.kind === 'band') {
-      const p1 = bandPt(f, S, -200), p0 = bandPt(f, -S, -200);
+      const p1 = bandPt(f, MAP_HALF, -200), p0 = bandPt(f, -MAP_HALF, -200);
       shape.lineTo(p1.x, -p1.z); shape.lineTo(p0.x, -p0.z);
     }
     const geo = new THREE.ShapeGeometry(shape);
     geo.rotateX(-Math.PI / 2);   // shapeの(x,-z)を世界の(x,z)へ。面は上向きになる
     const mesh = new THREE.Mesh(geo, mat);
     mesh.receiveShadow = true;   // 岸辺の建物・木の影が水面に落ちる
-    mesh.position.y = -11.6 + 0.15 * li++;
+    mesh.position.y = WATER_SURFACE_Y + 0.15 * li++;
     group.add(mesh);
     const foam = new THREE.Mesh(makeFoamGeometry(f), foamMat);
     foam.position.y = mesh.position.y + 0.07;   // 水面のすぐ上に重ねる
     group.add(foam);
   }
-  return { mat, time, skyColor };
+  return view;
 }

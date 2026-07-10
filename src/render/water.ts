@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import type { CityData } from '../core/cityGen';
 import { MAP_HALF } from '../core/config';
 import { rngFor, type Rng } from '../core/rng';
-import { bandPt, shorePts } from '../core/terrain';
+import { bandPt, shorePts, type WaterFeat } from '../core/terrain';
 import type { GroundPalette } from './sky';
 
 export interface WaterView {
@@ -108,6 +108,58 @@ export function patchWaterShader(
     .replace(OUTGOING_LINE, FRESNEL);
 }
 
+// ---------- 岸の泡 ----------
+
+const FOAM_W = 3;   // 泡の帯の幅(m)。岸線から水側へ
+
+// onBeforeCompileの置換対象原文(three r185 meshbasic)。見つからなければthrowで気付く
+export const FOAM_DIFFUSE_LINE = 'vec4 diffuseColor = vec4( diffuse, opacity );';
+
+// 泡マテリアルのシェーダーパッチ: 頂点属性foamInfo=(外1→内0のフェード, 揺らぎ位相)を
+// 透明度に乗せ、水面と同じ時刻uniformでゆっくり明滅させる
+export function patchFoamShader(
+    sh: { uniforms: Record<string, { value: unknown }>; vertexShader: string; fragmentShader: string },
+    time: { value: number }): void {
+  if (!sh.fragmentShader.includes(FOAM_DIFFUSE_LINE)) {
+    throw new Error('patchFoamShader: 想定行がない(threeの更新でシェーダー原文が変わった)');
+  }
+  sh.uniforms.uWaterTime = time;
+  sh.vertexShader = sh.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute vec2 foamInfo;\nvarying vec2 vFoam;')
+    .replace('#include <begin_vertex>', 'vFoam = foamInfo;\n#include <begin_vertex>');
+  sh.fragmentShader = sh.fragmentShader
+    .replace('#include <common>', '#include <common>\nuniform float uWaterTime;\nvarying vec2 vFoam;')
+    .replace(FOAM_DIFFUSE_LINE, FOAM_DIFFUSE_LINE +
+      '\n\tdiffuseColor.a *= vFoam.x * ( 0.6 + 0.25 * sin( uWaterTime * 1.4 + vFoam.y ) );');
+}
+
+// 岸線(inset 0)と水側(inset -FOAM_W)の点列を結ぶ帯ジオメトリ。
+// 岸線サンプラを水面と共用するので、泡は必ず岸のきわに乗る
+function makeFoamGeometry(f: WaterFeat): THREE.BufferGeometry {
+  const S = MAP_HALF, cl = (v: number): number => THREE.MathUtils.clamp(v, -S, S);
+  const outer = shorePts(f, 0), inner = shorePts(f, -FOAM_W);
+  const n = outer.length;
+  const pos = new Float32Array(n * 2 * 3);
+  const info = new Float32Array(n * 2 * 2);
+  for (let i = 0; i < n; i++) {
+    const o = outer[i], q = inner[i];
+    // 地図の縁で水面がクランプされる列は泡を消す(縁に沿った白線を出さない)
+    const fade = Math.max(Math.abs(o.x), Math.abs(o.z), Math.abs(q.x), Math.abs(q.z)) > S ? 0 : 1;
+    pos.set([cl(o.x), 0, cl(o.z), cl(q.x), 0, cl(q.z)], i * 6);
+    info.set([fade, i * 0.9, 0, i * 0.9], i * 4);
+  }
+  const idx: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    const a = i * 2;
+    idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('foamInfo', new THREE.BufferAttribute(info, 2));
+  geo.setIndex(idx);
+  return geo;
+}
+
 // 水域と同じ岸線から水面メッシュを作り、平坦化された水底(-12)の少し上に浮かべる
 export function buildWaterSurface(city: CityData, group: THREE.Group, G: GroundPalette): WaterView | null {
   const feats = city.terrain.feats.filter(f => f.type === 'r');
@@ -123,6 +175,11 @@ export function buildWaterSurface(city: CityData, group: THREE.Group, G: GroundP
     specular: new THREE.Color(G.waterSpec), shininess: G.waterShine,
   });
   mat.onBeforeCompile = (sh): void => patchWaterShader(sh, time, skyColor);
+  // 岸の泡(全河川で1マテリアル共有。ライティング・影を受けないBasic)
+  const foamMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide,
+  });
+  foamMat.onBeforeCompile = (sh): void => patchFoamShader(sh, time);
   const S = MAP_HALF, cl = (v: number): number => THREE.MathUtils.clamp(v, -S, S);
   let li = 0;   // 川同士の重なりでZファイティングしないよう1枚ごとに高さをずらす
   for (const f of feats) {
@@ -142,6 +199,9 @@ export function buildWaterSurface(city: CityData, group: THREE.Group, G: GroundP
     mesh.receiveShadow = true;   // 岸辺の建物・木の影が水面に落ちる
     mesh.position.y = -11.6 + 0.15 * li++;
     group.add(mesh);
+    const foam = new THREE.Mesh(makeFoamGeometry(f), foamMat);
+    foam.position.y = mesh.position.y + 0.07;   // 水面のすぐ上に重ねる
+    group.add(foam);
   }
   return { mat, time, skyColor };
 }

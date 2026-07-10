@@ -5,8 +5,8 @@ import { describe, expect, it } from 'vitest';
 import type { CityData } from '../src/core/cityGen';
 import { rngFor } from '../src/core/rng';
 import { TIMES } from '../src/render/sky';
-import { buildWaterSurface, makeWaterNormalData, MAPN_LINE, OUTGOING_LINE, patchWaterShader,
-  type WaterView } from '../src/render/water';
+import { buildWaterSurface, FOAM_DIFFUSE_LINE, makeWaterNormalData, MAPN_LINE, OUTGOING_LINE,
+  patchFoamShader, patchWaterShader, type WaterView } from '../src/render/water';
 import { assembleFragment, mkTerrain } from './helpers';
 
 const rng = (): ReturnType<typeof rngFor> => rngFor('WATER-TEST', 'waterTex');
@@ -115,20 +115,65 @@ describe('patchWaterShader', () => {
   });
 });
 
+describe('patchFoamShader', () => {
+  const mkShader = (): { uniforms: Record<string, { value: unknown }>;
+      vertexShader: string; fragmentShader: string } =>
+    ({ uniforms: {}, vertexShader: THREE.ShaderLib.basic.vertexShader,
+      fragmentShader: THREE.ShaderLib.basic.fragmentShader });
+
+  it('時刻uniformを共有し、foamInfo属性が透明度へ乗る', () => {
+    const time = { value: 0 }, sh = mkShader();
+    patchFoamShader(sh, time);
+    expect(sh.uniforms.uWaterTime).toBe(time);
+    const glsl = assembleFragment(sh.fragmentShader, 0, 0, []);
+    expect(glsl).toContain(FOAM_DIFFUSE_LINE);   // 原文の直後に乗算を足す(置換でなく追記)
+    expect(glsl).toContain('diffuseColor.a *= vFoam.x');
+    expect(glsl).not.toContain('#include <');
+    // 頂点側: 属性の宣言と受け渡し
+    expect(sh.vertexShader).toContain('attribute vec2 foamInfo;');
+    expect(sh.vertexShader).toContain('vFoam = foamInfo;');
+  });
+
+  it('threeの更新でシェーダー原文が変わったらthrowで気付く', () => {
+    expect(() => patchFoamShader({ uniforms: {}, vertexShader: '', fragmentShader: 'void main() {}' },
+      { value: 0 })).toThrow(/想定行がない/);
+  });
+});
+
 describe('buildWaterSurface', () => {
   // buildWaterSurfaceはseedとterrain.featsしか使わないので、地形だけの疑似CityDataで足りる
   const mkCity = (seed: string): CityData =>
     ({ seed, terrain: mkTerrain(seed) } as unknown as CityData);
 
-  it('水域のあるシードでWaterViewを返し、メッシュが影を受けつつ水底より上に浮く', () => {
+  it('水域のあるシードでWaterViewを返し、水面と泡が水底より上に浮く', () => {
     const group = new THREE.Group();
     const water = buildWaterSurface(mkCity('BAKUGEKI-01'), group, TIMES.day.ground) as WaterView;
     expect(water).not.toBeNull();
-    expect(group.children.length).toBeGreaterThan(0);
-    for (const m of group.children as THREE.Mesh[]) {
-      expect(m.receiveShadow).toBe(true);
+    const meshes = group.children as THREE.Mesh[];
+    const surf = meshes.filter(m => m.material instanceof THREE.MeshPhongMaterial);
+    const foam = meshes.filter(m => m.material instanceof THREE.MeshBasicMaterial);
+    expect(surf.length).toBeGreaterThan(0);
+    expect(foam.length).toBe(surf.length);   // 河川1枚につき泡リング1本
+    for (const m of surf) {
+      expect(m.receiveShadow).toBe(true);   // 岸辺の建物・木の影が水面に落ちる
       expect(m.position.y).toBeGreaterThan(-12);
       expect(m.position.y).toBeLessThan(-10);
+    }
+    for (const m of foam) {
+      const mat = m.material as THREE.MeshBasicMaterial;
+      expect(mat.transparent).toBe(true);
+      expect(mat.depthWrite).toBe(false);
+      // 泡は対応する水面のすぐ上(いずれかの水面+0.07)に乗る
+      expect(surf.some(s => Math.abs(m.position.y - s.position.y - 0.07) < 1e-9)).toBe(true);
+      // ジオメトリ: 外周・内周の2列ストリップで、フェードは0..1
+      const info = m.geometry.getAttribute('foamInfo');
+      expect(info.itemSize).toBe(2);
+      expect(m.geometry.getAttribute('position').count).toBe(info.count);
+      for (let i = 0; i < info.count; i++) {
+        expect(info.getX(i)).toBeGreaterThanOrEqual(0);
+        expect(info.getX(i)).toBeLessThanOrEqual(1);
+        if (i % 2 === 1) expect(info.getX(i)).toBe(0);   // 内周(水側)はフェード0
+      }
     }
     // 時間帯uniformの初期値はプリセットと一致
     expect('#' + water.skyColor.value.getHexString()).toBe(TIMES.day.ground.waterSky);

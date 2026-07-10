@@ -161,8 +161,11 @@ export class Terrain {
         // 高さプロファイルは意図的に band=線形の肩 / disc=釣鐘型 で異なる
         if (tn < 1) { const k = f.kind === 'band' ? 1 - tn : 1 - tn * tn; hh += f.amp * k * k; }
       } else {
+        // 岸線(pen=0)の少し手前でwb=1に到達させ、水域内の地形を必ず水底(-12)まで
+        // 沈める。以前は岸から水側50mまでかけて沈めていたため、その帯の地形が
+        // 水面メッシュ(-11.6)より上に露出し、水色に塗った地面が見えていた
         const pen = waterPen(f, x, z);
-        if (pen > -90) wb = Math.max(wb, Math.min(1, (pen + 90) / 140));
+        if (pen > -90) wb = Math.max(wb, Math.min(1, (pen + 90) / 86));
       }
     }
     if (wb > 0) hh = lerp(hh, -12, wb);   // 水面は起伏の影響を受けず平坦

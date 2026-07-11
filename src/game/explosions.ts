@@ -65,6 +65,10 @@ const _pv = new THREE.Vector3();
 // 演出の規模係数の基準半径。R=R_REFのとき等倍で、子弾など小半径ほど縮む
 const R_REF = 105;
 
+// クレーター半径/爆発半径。地面への焼き込みと基礎台の消失(destroyAround)で共用し、
+// クレーターの見た目と基礎が消える範囲を常に一致させる
+export const CRATER_RATIO = 0.7;
+
 export function detonate(world: World, p: { x: number; y: number; z: number }, R: number): void {
   const { gfx, sim, city, view, debris } = world;
   const FX = gfx.fx;
@@ -81,7 +85,8 @@ export function detonate(world: World, p: { x: number; y: number; z: number }, R
   ringFx(world, FX.ringAddD(0xffd9a8, 0.95), p.x, gy + 2.5, p.z, 0.7, 8 * f, 420 * f, 0.55, 0.95);
   ringFx(world, FX.ringD(0x8a7458, 0.5), p.x, gy + 1.8, p.z, 1.5, 12 * f, 520 * f, 0.6, 0.5);
   // --- クレーターと焦げ跡を地面テクスチャへ焼き込む(水中はGroundView側が弾く) ---
-  view.ground.pushCrater(p.x, p.z, R * 0.7);
+  const craterR = R * CRATER_RATIO;
+  view.ground.pushCrater(p.x, p.z, craterR);
   view.ground.pushStamp({ kind: 'scorch', x: p.x, z: p.z, r: R * 1.6 });
   // --- 火球パーティクル(白核 → 橙 → 深紅の三層) ---
   const cnt = (n: number): number => Math.max(4, Math.round(n * f));
@@ -156,7 +161,7 @@ export function detonate(world: World, p: { x: number; y: number; z: number }, R
     }
   }
 
-  destroyAround(world, p, R);
+  destroyAround(world, p, R, 0, 0, craterR);
   const dc = gfx.camera.position.distanceTo(_pv.set(p.x, gy, p.z));
   sim.shake += Math.min(26, 9000 / Math.max(220, dc)) * f;
   playBoom(dc / f);
@@ -263,7 +268,8 @@ export function detonateNuke(world: World, p: { x: number; y: number; z: number 
   // --- 上空の凝結リング(ウィルソン雲) ---
   ringFx(world, FX.ringD(0xf0f4f8, 0.55), p.x, gy + 260, p.z, 2.2, 80, 850, 0.7, 0.55);
   // --- 巨大な焦げ跡と舗装の破壊跡を地面テクスチャへ焼き込む(水中はGroundView側が弾く) ---
-  view.ground.pushCrater(p.x, p.z, R * 0.7);
+  const craterR = R * CRATER_RATIO;
+  view.ground.pushCrater(p.x, p.z, craterR);
   view.ground.pushStamp({ kind: 'nuke', x: p.x, z: p.z, r: R * 1.3 });
   // --- 土煙・スパーク・瓦礫 ---
   for (let i = 0; i < 150; i++) {
@@ -298,7 +304,7 @@ export function detonateNuke(world: World, p: { x: number; y: number; z: number 
       x: p.x + Math.cos(a) * rr, z: p.z + Math.sin(a) * rr });
   }
   // --- 破壊: 衝撃波の速度で外側へ波及 ---
-  destroyAround(world, p, R, 0, 300);
+  destroyAround(world, p, R, 0, 300, craterR);
   const dc = gfx.camera.position.distanceTo(_pv.set(p.x, gy, p.z));
   sim.shake += Math.min(40, 26000 / Math.max(300, dc));
   playNuke(dc);

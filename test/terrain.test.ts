@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MAP_HALF } from '../src/core/config';
 import { rngFor } from '../src/core/rng';
-import { generateFeatures, shorePts, Terrain, waterPen } from '../src/core/terrain';
+import { generateFeatures, shorePts, SPAN_OFFS, Terrain, waterPen } from '../src/core/terrain';
 import { mkTerrain } from './helpers';
 
 const SEEDS = ['BAKUGEKI-01', 'CITY-00001', 'CITY-12345', 'TOKYO', 'a', 'ながいシード文字列'];
@@ -36,12 +36,24 @@ describe('Terrain', () => {
     }
   });
 
-  it('groundLevelは敷地5点サンプルの最小値', () => {
+  it('groundSpanは敷地サンプル点の最高点と最低点', () => {
     const t = mkTerrain('GL');
-    const g = t.groundLevel(100, 200, 30, 40);
-    expect(g).toBeLessThanOrEqual(t.h(100, 200));
-    expect(g).toBeLessThanOrEqual(t.h(85, 180));
-    expect(g).toBeLessThanOrEqual(t.h(115, 220));
+    const g = t.groundSpan(100, 200, 30, 40);
+    expect(g.top).toBeGreaterThanOrEqual(g.bottom);
+    // すべてのサンプル点がtopとbottomの間に入る
+    for (const [ox, oz] of SPAN_OFFS) {
+      const h = t.h(100 + ox * 15, 200 + oz * 20);
+      expect(g.top).toBeGreaterThanOrEqual(h - 1e-9);
+      expect(g.bottom).toBeLessThanOrEqual(h + 1e-9);
+    }
+  });
+
+  it('groundSpanは敷地の回転に追従する(90度回転=寸法の入れ替え)', () => {
+    const t = mkTerrain('GL');
+    const a = t.groundSpan(100, 200, 30, 40, Math.PI / 2);
+    const b = t.groundSpan(100, 200, 40, 30, 0);
+    expect(a.top).toBeCloseTo(b.top, 6);
+    expect(a.bottom).toBeCloseTo(b.bottom, 6);
   });
 
   it('shorePtsのinsetは岸線を陸側へ張り出させる(水面より外)', () => {

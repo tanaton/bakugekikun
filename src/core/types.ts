@@ -10,11 +10,13 @@ export type BState = (typeof B)[keyof typeof B];
 
 export interface Building {
   x: number; z: number;
-  gy: number;              // 接地高さ(敷地の最も低い点)
+  gy: number;              // 接地高さ(敷地サンプルの最も高い点)
+  fd: number;              // 基礎の深さ(gyから敷地最低点まで。>=0)
   sx: number; sz: number; h: number;
   rot: number;
   k: number;               // メッシュ種別 0=コンクリ 1=ガラス 2以降=民家(屋根色別)
   mi: number;              // InstancedMesh内のインスタンス番号
+  fi: number;              // 基礎台メッシュ内のインスタンス番号(=buildings配列のインデックス)
   value: number;
   color: RGB;
   state: BState;

@@ -6,7 +6,8 @@
 
 import { N_CARS, PLACE_FOREST, PLACE_TREE, ROAD_STEP, inMap } from './config';
 import { hslToRgb, jitterHdr } from './color';
-import { addBuildingLot, BUILDING_KINDS, lotToWorld, pushTree, type GenCity } from './lots';
+import { addBuildingLot, BUILDING_KINDS, pushTree, type GenCity } from './lots';
+import { lotToWorld } from './math';
 import { bakeRoadHeights, carPose, cullMountainAlleys, cullMountainRoads, laneOffset, RoadMask } from './roads';
 import { genGridPlan, genRadialPlan } from './plans';
 import { pick, rngFor } from './rng';

@@ -51,12 +51,13 @@ const { FxPools } = await import('../src/render/fxPool');
 const { makeLightPool } = await import('../src/render/lightPool');
 const { mkSunRig } = await import('./helpers');
 const { applyTime, createWorld, regenerate } = await import('../src/game/world');
-const { detonate, detonateNuke } = await import('../src/game/explosions');
+const { CRATER_RATIO, detonate, detonateNuke } = await import('../src/game/explosions');
 const { requestStrike } = await import('../src/game/missiles');
 const { stepSim } = await import('../src/game/loop');
 const { B } = await import('../src/core/types');
 const { GROUND_TEX } = await import('../src/core/config');
 const { FLUSH_FULL_RATIO } = await import('../src/render/ground');
+const { HIDDEN_MAT } = await import('../src/render/instanced');
 import type { Gfx } from '../src/render/gfx';
 
 // WebGLRendererなしの偽Gfx(それ以外は本物)
@@ -123,13 +124,23 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
     // 建物密集地の中心に直接起爆して破壊を確認
     const target = world.city.buildings[Math.floor(world.city.buildings.length / 2)];
     const before = world.sim.stats.bDead;
-    detonate(world, { x: target.x, y: target.gy, z: target.z }, 105);
+    const boomR = 105;
+    detonate(world, { x: target.x, y: target.gy, z: target.z }, boomR);
     expect(world.sim.stats.bDead).toBeGreaterThan(before);
     expect(world.sim.stats.damage).toBeGreaterThan(0);
+    // 爆心地(クレーター内)の基礎台は消し飛ぶ(HIDDEN_MATの退避Y位置へ移動している)
+    const fndM = new THREE.Matrix4();
+    world.view.fndMesh.getMatrixAt(target.fi, fndM);
+    expect(fndM.elements[13]).toBe(HIDDEN_MAT.elements[13]);
     // 崩壊が完了するまで回す → 対象の建物が死んでいる
     for (let i = 0; i < 600 && world.sim.collapsing.length; i++) { now += 16; stepSim(world, 0.016, now); }
     expect(world.sim.collapsing.length).toBe(0);
     expect(target.state === B.Dead || target.state === B.Burning).toBe(true);
+    // クレーター外で崩壊しきった建物の基礎台は焼け色(インスタンス色が白でない)
+    const charred = world.city.buildings.find(b =>
+      b.state === B.Dead && Math.hypot(b.x - target.x, b.z - target.z) > boomR * CRATER_RATIO);
+    expect(charred).toBeDefined();
+    expect(world.view.fndMesh.instanceColor!.getX(charred!.fi)).toBeLessThan(1);
 
     // 戦術核
     detonateNuke(world, { x: 0, y: world.city.terrain.h(0, 0), z: 0 });

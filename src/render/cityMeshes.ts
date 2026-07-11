@@ -7,7 +7,7 @@ import { MAP_HALF } from '../core/config';
 import { BUILDING_KINDS, HOUSE_K0, ROOF_COLS } from '../core/lots';
 import { rngFor } from '../core/rng';
 import type { Building, Tree } from '../core/types';
-import { makeHouseGeometry, makeTowerGeometry, makeTreeGeometries } from './geometries';
+import { makeFoundationGeometry, makeHouseGeometry, makeTowerGeometry, makeTreeGeometries } from './geometries';
 import { GroundView } from './ground';
 import { DirtyRanges, flushRange, forEachMaterial, HIDDEN_MAT, instanceDummy, setInstanceAt } from './instanced';
 import { replaceOrThrow } from './shaderPatch';
@@ -18,6 +18,7 @@ import { buildWaterSurface, type WaterView } from './water';
 export interface CityView {
   group: THREE.Group;
   bMeshes: THREE.InstancedMesh[];      // [0:コンクリビル, 1:ガラスビル, 2以降:民家(屋根色別)]
+  fndMesh: THREE.InstancedMesh;        // 基礎台(インスタンス番号はb.fi)
   treeChunks: THREE.InstancedMesh[];   // 空間チャンク×樹種ごと(チャンク単位でカリング)
   carMesh: THREE.InstancedMesh;
   ground: GroundView;
@@ -37,6 +38,11 @@ export function setBuildingLit(view: CityView, b: Building, on: boolean): void {
 // 倒壊した建物の焼け色(このモジュールがcolorModeを先にimportしているので変換されない)
 const FALLEN_COL = new THREE.Color(0x5c564e);
 
+// 基礎台の寸法マージン
+const FND_LEDGE = 0.25;  // 壁面より外に出す幅(壁と同一面だとZファイトする)
+const FND_TOP = 0.12;    // 天端をgyよりわずかに上げ、地形との接触を壁でなくコンクリにする
+const FND_EMBED = 1.2;   // 最低点より下への埋め込み(地面メッシュの補間誤差を隠す)
+
 // 倒壊しきった建物を焼け色にする(インスタンス色の書き込みと転送予約はここに閉じる)
 export function markBuildingFallen(view: CityView, b: Building): void {
   const mesh = view.bMeshes[b.k];
@@ -47,6 +53,31 @@ export function markBuildingFallen(view: CityView, b: Building): void {
 // 圧壊しきった建物を画面外へ隠す(転送はupdateCollapsesの建物範囲転送に乗る)
 export function hideBuildingInstance(view: CityView, b: Building): void {
   view.bMeshes[b.k].setMatrixAt(b.mi, HIDDEN_MAT);
+}
+
+// 崩壊しきった建物の基礎台を焼け色にする(材質色0x8f8d86に乗算され実効色は約0x211e1b。
+// 周囲の焦げ跡スタンプrgb(8..20)の黒に馴染むほぼ黒+わずかな暖色)。
+// 初回のsetColorAtでinstanceColorが白=1で確保されるため、無傷の基礎の色は変わらない
+const FND_CHAR_COL = new THREE.Color(0x3a3733);
+export function markFoundationCharred(view: CityView, b: Building): void {
+  view.fndMesh.setColorAt(b.fi, FND_CHAR_COL);
+  flushRange(view.fndMesh.instanceColor!, b.fi, b.fi, 3);
+}
+
+// 爆心地(クレーター内)の基礎台を画面外へ隠す(基礎ごと消し飛んだ表現)。
+// 同じ場所への再爆撃で毎回書き込まないよう退避済みならスキップし、
+// 転送予約は書き換えた範囲をまとめてflushHiddenFoundationsが行う(木と同じ方式)
+const _fndHit = new DirtyRanges();
+export function hideFoundationInstance(view: CityView, b: Building): void {
+  const arr = view.fndMesh.instanceMatrix.array as Float32Array;
+  if (arr[b.fi * 16 + 13] === HIDDEN_MAT.elements[13]) return;   // 既に消し飛んでいる(退避Y)
+  view.fndMesh.setMatrixAt(b.fi, HIDDEN_MAT);
+  _fndHit.add(0, b.fi);
+}
+
+// 隠した基礎台の範囲をまとめてGPUへ転送予約する(destroyAroundの走査後に呼ぶ)
+export function flushHiddenFoundations(view: CityView): void {
+  _fndHit.flush(() => view.fndMesh.instanceMatrix, 16);
 }
 
 // 建物のインスタンス行列を書く(sy=高さ倍率、tiltX/Z=傾き)
@@ -257,6 +288,20 @@ export function buildCityView(scene: THREE.Scene, city: CityData, timeMode: Time
     group.add(bMeshes[t]);
   }
 
+  // --- 基礎(盛り基礎: 壁の接地面から敷地最低点より下まで伸びるコンクリ台) ---
+  // 建物は敷地の最高点(b.gy)に接地するため、低い側にできる隙間をこの台が埋める。
+  // bMeshes/litAttrsには入れない(b.kインデックスと同順の前提が壊れる)。
+  // 破壊後も残す(地面テクスチャの基礎跡スタンプの3D版として自然)
+  const fndMesh = new THREE.InstancedMesh(makeFoundationGeometry(),
+    new THREE.MeshLambertMaterial({ color: 0x8f8d86 }), city.buildings.length);
+  city.buildings.forEach((b, i) => {
+    const fh = b.fd + FND_TOP + FND_EMBED;
+    setInstanceAt(fndMesh, i, b.x, b.gy + FND_TOP - fh / 2, b.z,
+      0, b.rot, 0, b.sx + FND_LEDGE * 2, fh, b.sz + FND_LEDGE * 2);
+  });
+  fndMesh.receiveShadow = true;   // castShadowはfalse: 数万個ぶんの追加シャドウ描画を避ける
+  group.add(fndMesh);
+
   // --- 車 ---
   const carMesh = new THREE.InstancedMesh(
     new THREE.BoxGeometry(4.6, 2, 2.2),
@@ -280,7 +325,7 @@ export function buildCityView(scene: THREE.Scene, city: CityData, timeMode: Time
   ground.drawGround(G);
 
   return {
-    group, bMeshes, treeChunks, carMesh, ground, water, litAttrs,
+    group, bMeshes, fndMesh, treeChunks, carMesh, ground, water, litAttrs,
     setEmissiveIntensity: (base: number): void => {
       for (const e of emissive) e.mat.emissiveIntensity = base * e.scale;
     },

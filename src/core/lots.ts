@@ -4,10 +4,10 @@ import {
   floorValue, HOUSE_FLOORS, HOUSE_VALUE_PER_M2_FLOOR, inMap, PLACE_LOT,
 } from './config';
 import { palColor } from './color';
-import { clamp } from './math';
+import { clamp, lotToWorld } from './math';
 import type { Rng } from './rng';
 import type { Terrain } from './terrain';
-import { B, type Building, type Lot, type LotDecal, type Tree, type Vec2 } from './types';
+import { B, type Building, type Lot, type LotDecal, type Tree } from './types';
 
 const PAL_CON = [0xcfd2d6, 0xd8d2c6, 0xbac4cc, 0xc9c9c2, 0xaab4be, 0xd6cfc2, 0x9aa6b0,
   0xb9a88f, 0x8f9a8b, 0xa5988a, 0x93a0a8, 0xc2b6a0, 0x847e74, 0xbfae9c];      // ベージュ・煉瓦・緑灰なども
@@ -27,12 +27,6 @@ export interface GenCity {
   buildings: Building[];
   trees: Tree[];
   lotDecals: LotDecal[];
-}
-
-// 区画ローカル座標(回転rot)→世界座標。符号は地面描画の g.rotate(-rot) と一致させる
-export function lotToWorld(cx: number, cz: number, rot: number, lx: number, lz: number): Vec2 {
-  const c = Math.cos(rot), s = Math.sin(rot);
-  return { x: cx + lx * c + lz * s, z: cz - lx * s + lz * c };
 }
 
 // 木を1本登録(樹形と樹冠の幅係数はここで抽選し個体差を出す)。
@@ -78,8 +72,9 @@ function makePocketPark(city: GenCity, lot: Lot, rng: Rng, minWD: number, minTre
 // 建物レコードの共通部分(接地高さ・初期状態)を埋めて登録する
 function pushBuilding(city: GenCity, x: number, z: number, sx: number, sz: number, h: number,
                       rot: number, k: number, value: number, color: Building['color']): void {
-  city.buildings.push({ x, z, gy: city.terrain.groundLevel(x, z, sx, sz),
-    sx, sz, h, rot, k, mi: 0, value, color, state: B.Intact });
+  const g = city.terrain.groundSpan(x, z, sx, sz, rot);
+  city.buildings.push({ x, z, gy: g.top, fd: g.top - g.bottom,
+    sx, sz, h, rot, k, mi: 0, fi: city.buildings.length, value, color, state: B.Intact });
 }
 
 // プラン生成器が出したロット {x,z,rot,availW,availD,distC,house} を建物にする

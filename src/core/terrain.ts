@@ -1,7 +1,7 @@
 // 地形: シード付き値ノイズの高さ場 + 四隅/四辺の地形フィーチャ(山・水域)
 
 import { CITY_HALF, MAP_HALF, WATER_BED_Y } from './config';
-import { clamp, gridSample, lerp } from './math';
+import { clamp, gridSample, lerp, lotToWorld } from './math';
 import type { Rng } from './rng';
 import type { Vec2 } from './types';
 
@@ -132,6 +132,11 @@ export function generateFeatures(rng: Rng): CityFeatures {
 
 const TG_N = 33, TG_SPAN = 6400;
 
+// groundSpanのサンプル点(中心+4隅+4辺中点)。辺中点は大型ビルの敷地内で
+// 二重スケールノイズが凸になり隅より高くなるケースを拾う
+export const SPAN_OFFS: [number, number][] =
+  [[0, 0], [-1, -1], [1, -1], [-1, 1], [1, 1], [-1, 0], [1, 0], [0, -1], [0, 1]];
+
 export class Terrain {
   readonly feats: CornerFeat[];
   readonly cityCore: Vec2;
@@ -205,11 +210,17 @@ export class Terrain {
     return this.inMountain(x, z) || this.inWater(x, z);
   }
 
-  // 建物の接地高さ: 敷地の最も低い点に合わせて基礎を埋める
-  groundLevel(x: number, z: number, sx: number, sz: number): number {
+  // 建物の接地スパン: top=敷地サンプルの最高点(壁の接地高さ)、bottom=最低点(基礎の下端)。
+  // 最高点に接地して基礎で埋めることで、斜面の高い側の地形が壁にめり込まない
+  groundSpan(x: number, z: number, sx: number, sz: number, rot = 0): { top: number; bottom: number } {
     const hx = sx / 2, hz = sz / 2;
-    return Math.min(this.h(x, z),
-      this.h(x - hx, z - hz), this.h(x + hx, z - hz),
-      this.h(x - hx, z + hz), this.h(x + hx, z + hz));
+    let top = -Infinity, bottom = Infinity;
+    for (const [ox, oz] of SPAN_OFFS) {
+      const p = lotToWorld(x, z, rot, ox * hx, oz * hz);
+      const v = this.h(p.x, p.z);
+      if (v > top) top = v;
+      if (v < bottom) bottom = v;
+    }
+    return { top, bottom };
   }
 }

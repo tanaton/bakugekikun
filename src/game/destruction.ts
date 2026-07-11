@@ -3,8 +3,9 @@
 import { CAR_VALUE } from '../core/config';
 import { B, type Building, type Car } from '../core/types';
 import {
-  flushHiddenTrees, hideBuildingInstance, hideCarInstance, hideTreeInstance,
-  markBuildingFallen, setBuildingLit, setBuildingMatrix, toppleMatrix,
+  flushHiddenFoundations, flushHiddenTrees, hideBuildingInstance, hideCarInstance,
+  hideFoundationInstance, hideTreeInstance, markBuildingFallen, markFoundationCharred,
+  setBuildingLit, setBuildingMatrix, toppleMatrix,
 } from '../render/cityMeshes';
 import { DirtyRanges } from '../render/instanced';
 import { playPop } from '../ui/audio';
@@ -34,15 +35,18 @@ export function startCollapse(world: World, b: Building,
 }
 
 export function destroyAround(world: World, p: { x: number; z: number }, R: number,
-    depth = 0, wave = 0): void {
+    depth = 0, wave = 0, craterR = 0): void {
   const { sim, index, view, city } = world;
   // 建物(空間ハッシュで近傍のみ走査。距離は二乗で比較し、命中時だけsqrtを取る)
   const R2 = R * 1.55, Rsq = R * R, R2sq = R2 * R2, REsq = R2sq * 1.35 * 1.35;
+  const craterSq = craterR * craterR;
   // クエリ半径は最大の判定半径(延焼チェックの外縁R2*1.35)に合わせる。
   // 巻き添え崩壊(depth>0)は延焼しないのでR2まででよい
   index.buildings.forEachNear(p.x, p.z, depth === 0 ? R2 * 1.35 : R2, b => {
-    if (b.state !== B.Intact && b.state !== B.Burning) return;   // 延焼中は直撃なら壊せる
     const dx = b.x - p.x, dz = b.z - p.z, d2 = dx * dx + dz * dz;
+    // クレーター内は基礎台ごと消し飛ぶ(崩壊済みの跡地に残った基礎も対象)
+    if (craterSq && d2 <= craterSq) hideFoundationInstance(view, b);
+    if (b.state !== B.Intact && b.state !== B.Burning) return;   // 延焼中は直撃なら壊せる
     if (d2 <= Rsq || (d2 <= R2sq && Math.random() < 0.45)) {
       const dd = Math.sqrt(d2) || 1;
       // 爆心から遠い高層ビルは反対側へ倒れ込む(巻き添え倒壊は倒れない)
@@ -55,6 +59,7 @@ export function destroyAround(world: World, p: { x: number; z: number }, R: numb
       sim.burningBldgs.push({ b, collapseAt: sim.simT + 2 + Math.random() * 5, next: sim.simT });
     }
   });
+  if (craterSq) flushHiddenFoundations(view);
   // 車。走行車両は全数走査(位置キャッシュはcore生成時とupdateCarsが常に維持)、
   // 駐車車両は静的な空間ハッシュで近傍のみ走査する
   const CR = R * 1.25, CRsq = CR * CR;
@@ -107,6 +112,7 @@ export function updateCollapses(world: World, dt: number): void {
         toppleMatrix(view.bMeshes, b, c.amax, c.dirx, c.dirz);
         b.state = B.Dead;
         markBuildingFallen(view, b);
+        markFoundationCharred(view, b);
         view.ground.pushLot(b);   // 根本の基礎跡(焦げ跡の中では省略される)
         // 着地の粉塵が倒れた方向に走る
         for (let j = 0; j < 16; j++) {
@@ -133,10 +139,11 @@ export function updateCollapses(world: World, dt: number): void {
       }
       toppleMatrix(view.bMeshes, b, c.amax * c.t * c.t, c.dirx, c.dirz);
     } else {
-      // 圧壊: その場に沈み、沈みきったら本体を隠して基礎跡だけを地面に残す
+      // 圧壊: その場に沈み、沈みきったら本体を隠して焦げた基礎台と基礎跡だけを残す
       if (c.t >= 1) {
         b.state = B.Dead;
         hideBuildingInstance(view, b);
+        markFoundationCharred(view, b);
         view.ground.pushLot(b);
         collapsing.splice(i, 1);
         continue;

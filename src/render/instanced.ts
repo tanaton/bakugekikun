@@ -16,7 +16,7 @@ export function setInstanceAt(mesh: THREE.InstancedMesh, i: number,
   mesh.setMatrixAt(i, dummy.matrix);
 }
 
-// 破壊済みインスタンスを画面外へ隠す共用行列(瓦礫・車・木)
+// 破壊済みインスタンスを画面外へ隠す共用行列(瓦礫・車・木・建物・基礎台)
 export const HIDDEN_MAT = new THREE.Matrix4().makeScale(0.001, 0.001, 0.001).setPosition(0, -100, 0);
 
 // dummyは倒壊行列の計算でも使う(toppleMatrix)

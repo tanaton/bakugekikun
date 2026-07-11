@@ -14,7 +14,7 @@ exports[`generateCityData ダイジェスト > シード BAKUGEKI-01 のダイ�
   },
   "hashes": {
     "alleyPaths": 23215566,
-    "buildings": 456815845,
+    "buildings": 2143064484,
     "cars": 2765865786,
     "groundPolys": 3816251943,
     "lotDecals": 2203953714,
@@ -39,7 +39,7 @@ exports[`generateCityData ダイジェスト > シード CITY-00001 のダイジ
   },
   "hashes": {
     "alleyPaths": 3012238998,
-    "buildings": 1484779285,
+    "buildings": 1666206344,
     "cars": 3893152326,
     "groundPolys": 1136978912,
     "lotDecals": 4247033593,
@@ -64,7 +64,7 @@ exports[`generateCityData ダイジェスト > シード CITY-31337 のダイジ
   },
   "hashes": {
     "alleyPaths": 131652305,
-    "buildings": 1398889789,
+    "buildings": 4184427003,
     "cars": 3071384607,
     "groundPolys": 4025446591,
     "lotDecals": 606625417,
@@ -89,7 +89,7 @@ exports[`generateCityData ダイジェスト > シード TOKYO のダイジェ�
   },
   "hashes": {
     "alleyPaths": 2168922812,
-    "buildings": 4225991107,
+    "buildings": 896016662,
     "cars": 3033094811,
     "groundPolys": 251274756,
     "lotDecals": 424068519,
@@ -114,7 +114,7 @@ exports[`generateCityData ダイジェスト > シード niigata のダイジェ
   },
   "hashes": {
     "alleyPaths": 3693390689,
-    "buildings": 2126243944,
+    "buildings": 1112116294,
     "cars": 1275803253,
     "groundPolys": 1532085415,
     "lotDecals": 2676117136,
@@ -139,7 +139,7 @@ exports[`generateCityData ダイジェスト > シード ながいシード文�
   },
   "hashes": {
     "alleyPaths": 4070724330,
-    "buildings": 1387235268,
+    "buildings": 1947329183,
     "cars": 846949067,
     "groundPolys": 1371692112,
     "lotDecals": 880672019,

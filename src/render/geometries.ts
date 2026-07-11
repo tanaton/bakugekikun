@@ -77,6 +77,12 @@ export function makeHouseGeometry(): THREE.BufferGeometry {
   return mergeGroups([walls, roof]); // group0=壁 group1=屋根
 }
 
+// 建物の基礎台: 底面を省いた箱(下端は常に地中に埋めるので描かない)
+export function makeFoundationGeometry(): THREE.BufferGeometry {
+  const box = new THREE.BoxGeometry(1, 1, 1).toNonIndexed();
+  return sliceVerts(box, [[0, 18], [24, 36]]);   // -y面(頂点18..24)を落とす
+}
+
 // 木: 幹 + 樹冠(接地面y=0、高さ~1に正規化)。4種類の樹形。
 // 樹冠は低ポリのブロブを複数束ね、頂点を座標ハッシュでわずかに揺らして真球のCG感を消す
 // (乱数でなくハッシュなので決定的で、同一座標の頂点は同じ変位になり面が割れない)

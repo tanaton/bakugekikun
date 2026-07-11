@@ -1,7 +1,15 @@
 // THREE.MathUtils 相当の小道具(core層はthreeをimportしない)
 
+import type { Vec2 } from './types';
+
 export const clamp = (v: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, v));
+
+// 区画ローカル座標(回転rot)→世界座標。符号は地面描画の g.rotate(-rot) と一致させる
+export function lotToWorld(cx: number, cz: number, rot: number, lx: number, lz: number): Vec2 {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  return { x: cx + lx * c + lz * s, z: cz - lx * s + lz * c };
+}
 
 export const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 

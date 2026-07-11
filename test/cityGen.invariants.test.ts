@@ -28,7 +28,8 @@ describe('generateCityData 不変条件', () => {
       check(b.sx > 0 && b.sz > 0 && b.h > 0 && b.h <= 300, () => `建物の寸法が不正 ${b.sx}x${b.sz}x${b.h}`);
       check(b.value > 0, () => `建物の価値が不正 ${b.value}`);
       check(b.state === B.Intact, () => `建物の初期状態が不正 ${b.state}`);
-      check(b.gy <= city.terrain.h(b.x, b.z) + 1e-9, () => `接地高さが地形より高い (${b.x}, ${b.z})`);
+      check(b.gy >= city.terrain.h(b.x, b.z) - 1e-9, () => `接地高さが中心地形より低い (${b.x}, ${b.z})`);
+      check(b.fd >= 0 && Number.isFinite(b.fd), () => `基礎深さが不正 ${b.fd}`);
     }
     // 種類別インスタンス番号が各種類内で0..n-1の連番
     const byK = new Map<number, number[]>();

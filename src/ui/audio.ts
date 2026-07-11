@@ -18,7 +18,10 @@ export function initAudio(): void {
       if (Ctor) actx = new Ctor();
     } catch { /* 音は必須ではない */ }
   }
-  if (actx && actx.state === 'suspended') void actx.resume();
+  // iOSは非標準の'interrupted'状態にもなるため、running以外は一律resumeを試みる
+  if (actx && actx.state !== 'running' && actx.state !== 'closed') {
+    actx.resume().catch(() => { /* ジェスチャー外だと拒否されるが次の機会に再試行される */ });
+  }
 }
 
 // 減衰つきノイズバースト → ローパス(f0→f1) → ゲイン減衰(全爆発音の基本要素)

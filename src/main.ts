@@ -12,6 +12,7 @@ import {
   $, setPlanName, setShadowLabel, setSoundLabel, setTimeLabel, setWeaponLabel, updateHUD,
 } from './ui/hud';
 import { createInput } from './ui/input';
+import { wireJoystick } from './ui/joystick';
 import { wireProfilerKey } from './ui/profiler';
 
 const canvas = $('gl') as HTMLCanvasElement;
@@ -23,6 +24,16 @@ resizeGfx(gfx);
 
 const world = createWorld(gfx, seedInput.value || 'DEFAULT');
 const input = createInput(canvas, (px, py) => requestStrike(world, px, py));
+wireJoystick(input);
+
+// タッチ端末の判定はここで一度だけ行い、CSS側の表示切り替えは.touchクラスにぶら下げる
+// (JSとCSSで判定基準が食い違わないようにする)
+const isTouch = matchMedia('(pointer: coarse)').matches;
+document.documentElement.classList.toggle('touch', isTouch);
+// 中央ヒントの文言もボタンラベル同様、二重管理を避けてJS側から入れる
+$('hint').textContent = isTouch
+  ? 'タップ=爆撃 / ドラッグ=視点 / ピンチ=ズーム'
+  : '右クリックで爆撃地点を指定せよ';
 
 // --- UI配線 ---
 function regen(seed: string): void {
@@ -62,6 +73,7 @@ $('weaponBtn').addEventListener('click', () => {
 $('soundBtn').addEventListener('click', () => {
   setSoundLabel(toggleSound());
 });
+$('moreBtn').addEventListener('click', () => $('cmd').classList.toggle('open'));
 wireProfilerKey();
 
 // ボタンの初期ラベルはJS側の状態定義から入れる(HTMLとの文言二重管理を避ける)

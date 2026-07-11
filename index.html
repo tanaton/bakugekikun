@@ -2,30 +2,38 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>爆撃くん — GOD'S EYE STRIKE</title>
 </head>
 <body>
 <canvas id="gl"></canvas>
 <div id="hud">
   <div class="panel" id="cmd">
-    <h1>爆撃くん</h1>
-    <div class="sub">GOD'S EYE STRIKE CONSOLE</div>
-    <div class="label">City Seed</div>
-    <div class="seedrow">
-      <input id="seed" value="BAKUGEKI-01" spellcheck="false" aria-label="シード値">
-      <button id="regen" title="このシードで街を再生成">生成</button>
-      <button id="rand" title="ランダムなシードで生成">乱数</button>
+    <!-- .cmdExtra はタッチ端末では折りたたみ(#moreBtnで開閉)。主要ボタンは常時表示 -->
+    <div class="cmdhead">
+      <h1>爆撃くん</h1>
+      <button id="moreBtn" title="詳細メニューを開閉" aria-label="詳細メニューを開閉">☰</button>
+    </div>
+    <div class="cmdExtra">
+      <div class="sub">GOD'S EYE STRIKE CONSOLE</div>
+      <div class="label">City Seed</div>
+      <div class="seedrow">
+        <input id="seed" value="BAKUGEKI-01" spellcheck="false" aria-label="シード値">
+        <button id="regen" title="このシードで街を再生成">生成</button>
+        <button id="rand" title="ランダムなシードで生成">乱数</button>
+      </div>
     </div>
     <!-- ボタンのラベルはJS側の状態定義から入れる(文言の二重管理を避ける) -->
     <div class="seedrow">
       <button id="timeBtn" style="flex:1" title="昼と夕暮れを切り替え"></button>
       <button id="shadowBtn" title="影の描画を切り替え"></button>
     </div>
-    <div class="seedrow"><button id="weaponBtn" style="flex:1" title="右クリックで発射する弾種を切り替え"></button></div>
-    <div class="label" id="planName" style="margin-top:8px">都市プラン: —</div>
-    <div class="label" id="perf" style="margin-top:4px">— fps</div>
-    <div id="prof"></div>
+    <div class="seedrow"><button id="weaponBtn" style="flex:1" title="発射する弾種を切り替え"></button></div>
+    <div class="cmdExtra">
+      <div class="label" id="planName" style="margin-top:8px">都市プラン: —</div>
+      <div class="label" id="perf" style="margin-top:4px">— fps</div>
+      <div id="prof"></div>
+    </div>
   </div>
 
   <div class="panel" id="report">
@@ -40,7 +48,7 @@
 
   <div class="panel" id="help">
     <div class="label" style="margin-bottom:4px">Controls</div>
-    <div><span class="key">W A S D</span><b>移動</b></div>
+    <div><span class="key">W A S D / ↑←↓→</span><b>移動</b></div>
     <div><span class="key">左ドラッグ</span><b>視点回転</b></div>
     <div><span class="key">ホイール</span><b>ズーム</b></div>
     <div><span class="key">右クリック</span><b style="color:var(--red)">爆撃指定</b></div>
@@ -48,7 +56,8 @@
   </div>
 
   <div class="panel" id="soundWrap"><button id="soundBtn"></button></div>
-  <div id="hint">右クリックで爆撃地点を指定せよ</div>
+  <div id="stick"><div id="stickKnob"></div></div>
+  <div id="hint"><!-- 文言はmain.tsがタッチ/マウスで出し分ける --></div>
   <div id="nukeFlash"></div>
 </div>
 <script type="module" src="/src/main.ts"></script>

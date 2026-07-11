@@ -4,7 +4,7 @@
 import { CITY_HALF } from './config';
 import { clamp, gridSample } from './math';
 import { genRoadLines, resamplePath } from './roads';
-import { isHouseZone } from './lots';
+import { blockPitch, housePitch, isHouseZone } from './lots';
 import type { Rng } from './rng';
 import type { AlleyPath, GroundPoly, Lot, RoadPath, Vec2 } from './types';
 
@@ -70,8 +70,8 @@ export function genGridPlan(rng: Rng, organic: boolean, cityCore: Vec2, cityHous
         continue;
       }
       // ロット分割
-      const nx = Math.max(1, house ? Math.floor(w / (15 + rng() * 6)) : Math.min(4, Math.floor(w / (26 + rng() * 26))));
-      const nz = Math.max(1, house ? Math.floor(d / (15 + rng() * 6)) : Math.min(4, Math.floor(d / (26 + rng() * 26))));
+      const nx = Math.max(1, house ? Math.floor(w / housePitch(rng)) : Math.min(4, Math.floor(w / blockPitch(rng))));
+      const nz = Math.max(1, house ? Math.floor(d / housePitch(rng)) : Math.min(4, Math.floor(d / blockPitch(rng))));
       const cw = w / nx, cd = d / nz;
       // ロット境界に沿った街区内の路地(isU=trueは固定座標がu軸側)
       const alley = (c: number, lo: number, hi: number, isU: boolean): void => {
@@ -190,7 +190,7 @@ export function genRadialPlan(rng: Rng, cityCore: Vec2, cityHouseTh: number): Pl
             const nA2 = Math.max(4, Math.round((aB - aA) * r0 / 30));
             out.alleyPaths.push({ pts: arcPts(a => Math.min(r0, rO(a) - 3), aA, aB, nA2), w: 5 });
           }
-          const lotW = houseO ? 16 + rng() * 5 : 30 + rng() * 20;
+          const lotW = houseO ? housePitch(rng) : blockPitch(rng);
           const nt = Math.max(1, Math.floor((aB - aA) * ((r0 + rB) / 2) / lotW));
           for (let it = 0; it < nt; it++) {
             const ac = aA + (aB - aA) * ((it + 0.5) / nt);
@@ -202,7 +202,7 @@ export function genRadialPlan(rng: Rng, cityCore: Vec2, cityHouseTh: number): Pl
             const rTop = last ? rO(ac) - 6 : Math.min(rB - 3, rO(ac) - 6);
             const depth = rTop - r0 - 3;
             if (depth < 16) continue;
-            const lotD = houseO ? 16 + rng() * 5 : 30 + rng() * 20;
+            const lotD = houseO ? housePitch(rng) : blockPitch(rng);
             const nrL = Math.max(1, Math.floor(depth / lotD));
             const cdl = depth / nrL;
             for (let jr = 0; jr < nrL; jr++) {
@@ -232,7 +232,7 @@ export function genRadialPlan(rng: Rng, cityCore: Vec2, cityHouseTh: number): Pl
         continue;
       }
       // ロット分割(半径方向 × 角度方向)
-      const nr = Math.max(1, house ? Math.floor(depth / (15 + rng() * 6)) : Math.min(3, Math.floor(depth / (28 + rng() * 22))));
+      const nr = Math.max(1, house ? Math.floor(depth / housePitch(rng)) : Math.min(3, Math.floor(depth / blockPitch(rng))));
       const cd = depth / nr;
       // 街区内の路地(同心円の弧 + 放射方向)
       for (let jr = 1; jr < nr; jr++) {
@@ -248,7 +248,7 @@ export function genRadialPlan(rng: Rng, cityCore: Vec2, cityHouseTh: number): Pl
       for (let jr = 0; jr < nr; jr++) {
         const rc = rIn + 4 + cd * jr + cd / 2;
         const arc = (aB - aA) * rc;
-        const nt = Math.max(1, house ? Math.floor(arc / (15 + rng() * 6)) : Math.min(5, Math.floor(arc / (26 + rng() * 26))));
+        const nt = Math.max(1, house ? Math.floor(arc / housePitch(rng)) : Math.min(5, Math.floor(arc / blockPitch(rng))));
         const cwA = arc / nt;
         for (let it = 0; it < nt; it++) {
           const ac = aA + (aB - aA) * ((it + 0.5) / nt);

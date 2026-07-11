@@ -2,22 +2,33 @@
 
 import { MAP_HALF, ROAD_STEP } from './config';
 import { clamp } from './math';
+import { packCellKey } from './spatialHash';
 import type { Rng } from './rng';
 import type { Terrain } from './terrain';
 import type { AlleyPath, RoadPath, RoadPt, Vec2 } from './types';
 
-// 粗い点列を等間隔ROAD_STEPに打ち直す(h/hs/dx/dzはbakeRoadHeightsが後で埋める)
+// 粗い点列を等間隔に打ち直す(h/hs/dx/dzはbakeRoadHeightsが後で埋める)。
+// 非環状路はROAD_STEP刻み。環状路は周長をROAD_STEPに最も近い幅で等分する:
+// carPoseは全区間等長(1区間=ROAD_STEPぶんのs)としてパラメータ化するため、
+// 末尾→先頭に短い端数区間が残ると、そこだけ実長より長いsが割り当てられて
+// 車が継ぎ目で毎周失速する
 export function resamplePath(raw: Vec2[], loop: boolean): RoadPt[] {
   const mk = (x: number, z: number): RoadPt => ({ x, z, h: 0, hs: 0, dx: 0, dz: 0 });
   const pts = [mk(raw[0].x, raw[0].z)];
   const src = loop ? raw.concat([raw[0]]) : raw;
+  let step = ROAD_STEP;
+  if (loop) {
+    let per = 0;
+    for (let i = 1; i < src.length; i++) per += Math.hypot(src[i].x - src[i - 1].x, src[i].z - src[i - 1].z);
+    step = per / Math.max(3, Math.round(per / ROAD_STEP));
+  }
   let prev = src[0], acc = 0;
   for (let i = 1; i < src.length; i++) {
     const cur = src[i];
     let dx = cur.x - prev.x, dz = cur.z - prev.z;
     let segLen = Math.hypot(dx, dz);
-    while (segLen > 0 && acc + segLen >= ROAD_STEP) {
-      const t = (ROAD_STEP - acc) / segLen;
+    while (segLen > 0 && acc + segLen >= step) {
+      const t = (step - acc) / segLen;
       prev = { x: prev.x + dx * t, z: prev.z + dz * t };
       pts.push(mk(prev.x, prev.z));
       dx = cur.x - prev.x; dz = cur.z - prev.z;
@@ -27,11 +38,12 @@ export function resamplePath(raw: Vec2[], loop: boolean): RoadPt[] {
     acc += segLen;
     prev = cur;
   }
-  // ループで終点が始点にちょうど重なった場合は重複点を落とす
+  // ループの最後の点は始点と一致する(周長を等分しているため)ので重複点を落とす。
+  // 浮動小数点誤差で最後の等分点が打たれないこともあり、その場合は何もしなくてよい
   // (閉路の末尾→先頭の区間はcarPoseが補間する)
   if (loop && pts.length > 1) {
     const lastP = pts[pts.length - 1];
-    if (Math.hypot(lastP.x - raw[0].x, lastP.z - raw[0].z) < 1e-6) pts.pop();
+    if (Math.hypot(lastP.x - raw[0].x, lastP.z - raw[0].z) < step * 0.5) pts.pop();
   }
   return pts;
 }
@@ -94,7 +106,7 @@ const MASK_CELL = 20;
 export class RoadMask {
   private readonly mask = new Set<number>();
   private cellOf(v: number): number { return Math.round((v + MAP_HALF) / MASK_CELL); }
-  private key(cx: number, cz: number): number { return cx * 8192 + cz; }
+  private key(cx: number, cz: number): number { return packCellKey(cx, cz); }
 
   constructor(roadPaths: RoadPath[]) {
     for (const rp of roadPaths) {

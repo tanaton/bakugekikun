@@ -84,7 +84,9 @@ export function createInput(canvas: HTMLCanvasElement,
     e.preventDefault();
     zoomBy(Math.exp(e.deltaY * 0.0011));
   }, { passive: false });
-  addEventListener('contextmenu', e => e.preventDefault());
+  // 右クリック=爆撃指定はcanvas上だけの約束。windowに付けるとシード入力欄でも
+  // コンテキストメニュー(貼り付け等)が出なくなる
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
 
   return { cam, keys, move };
 }

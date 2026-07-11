@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import './colorMode';   // モジュール初期化時のColor構築より先にカラーマネジメントを無効化
 import type { CityData } from '../core/cityGen';
 import { MAP_HALF } from '../core/config';
-import { BUILDING_KINDS, HOUSE_K0, ROOF_COLS } from '../core/lots';
+import { HOUSE_K0, ROOF_COLS } from '../core/lots';
 import { rngFor } from '../core/rng';
 import type { Building, Tree } from '../core/types';
 import { makeFoundationGeometry, makeHouseGeometry, makeTowerGeometry, makeTreeGeometries } from './geometries';
@@ -222,9 +222,8 @@ export function buildCityView(scene: THREE.Scene, city: CityData, timeMode: Time
   const G = TIMES[timeMode].ground;
   const water = buildWaterSurface(city, group, G);
 
-  // --- 建物(種類別InstancedMesh) ---
-  const counts = new Array<number>(BUILDING_KINDS).fill(0);
-  for (const b of city.buildings) counts[b.k] = Math.max(counts[b.k], b.mi + 1);
+  // --- 建物(種類別InstancedMesh。確保数はcityGenの採番結果をそのまま使う) ---
+  const counts = city.kindCounts;
 
   const emissive: { mat: THREE.MeshLambertMaterial; scale: number }[] = [];
   // 窓明かりの消灯用インスタンス属性 'lit' をemissiveに乗算する。

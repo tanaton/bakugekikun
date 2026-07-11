@@ -33,6 +33,29 @@ describe('resamplePath', () => {
     const last = pts[pts.length - 1];
     expect(Math.hypot(last.x - 0, last.z - 0)).toBeLessThanOrEqual(ROAD_STEP + 1e-6);
   });
+
+  it('周長がROAD_STEPの倍数でないループは等分され、閉路区間も等長になる', () => {
+    // 環状道路の生成と同様に円を粗い点列で与える(周長627.3m ≒ 31.4ステップ)
+    const raw: Vec2[] = [];
+    for (let i = 0; i < 32; i++) {
+      const a = i / 32 * Math.PI * 2;
+      raw.push({ x: Math.cos(a) * 100, z: Math.sin(a) * 100 });
+    }
+    const pts = resamplePath(raw, true);
+    let per = 0;
+    for (let i = 1; i < raw.length; i++) per += Math.hypot(raw[i].x - raw[i - 1].x, raw[i].z - raw[i - 1].z);
+    per += Math.hypot(raw[0].x - raw[raw.length - 1].x, raw[0].z - raw[raw.length - 1].z);
+    expect(pts.length).toBe(Math.round(per / ROAD_STEP));
+    const step = per / pts.length;
+    // 全区間(末尾→先頭の閉路区間も含む)が等長。端数の短い区間が残ると
+    // carPoseのs等分パラメータ化とずれて、車が継ぎ目で毎周失速する
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      const d = Math.hypot(b.x - a.x, b.z - a.z);
+      expect(d).toBeLessThanOrEqual(step + 1e-9);
+      expect(d).toBeGreaterThan(step * 0.98);   // 折れ点をまたぐ弦のぶんだけ僅かに短くなる
+    }
+  });
 });
 
 describe('carPose', () => {

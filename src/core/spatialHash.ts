@@ -3,6 +3,10 @@
 
 import { GRID_CELL, MAP_HALF } from './config';
 
+// セル座標→Map/Setキーの共有パッキング(SpatialHashとRoadMaskで同じ約束を使う)。
+// 8192 > 世界の最大セル数(最小セル幅20mでも 2*MAP_HALF/20 = 270)なので衝突しない
+export const packCellKey = (cx: number, cz: number): number => cx * 8192 + cz;
+
 export class SpatialHash<T> {
   private readonly map = new Map<number, T[]>();
 
@@ -12,7 +16,7 @@ export class SpatialHash<T> {
   ) {}
 
   private cellOf(v: number): number { return Math.floor((v + this.origin) / this.cell); }
-  private key(cx: number, cz: number): number { return cx * 4096 + cz; }
+  private key(cx: number, cz: number): number { return packCellKey(cx, cz); }
 
   insert(x: number, z: number, item: T): void {
     const k = this.key(this.cellOf(x), this.cellOf(z));

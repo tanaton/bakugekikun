@@ -140,6 +140,7 @@ export const SPAN_OFFS: [number, number][] =
 export class Terrain {
   readonly feats: CornerFeat[];
   readonly cityCore: Vec2;
+  readonly maxH: number;   // h()の解析的な上界。レイ交差のマーチ開始高度(rayGroundHit)が使う
   private readonly grid: Float32Array;
   private readonly amp: number;
 
@@ -150,6 +151,17 @@ export class Terrain {
     this.grid = new Float32Array(TG_N * TG_N);
     for (let i = 0; i < this.grid.length; i++) this.grid[i] = rng();
     this.amp = 45 + rng() * 55;
+    // 上界 = 基礎起伏の最大値 + 全ての山の隆起の合計(世界±MAP_HALF内で有効)。
+    // 山フィーチャ同士(同種)はfeatConflictsが重なりを許すため、隅の山と隣接する
+    // 辺の山脈が加算されて単独の山の最大値を超える峰ができる(固定値600では足りない)
+    let mh = this.amp * 1.05;   // h()の (c1-0.5)*1.6 + (c2-0.5)*0.5 の最大値
+    for (const f of this.feats) {
+      if (f.type !== 'm') continue;
+      // 帯状の山は地図の縁(CITY_HALF)より外で正規化距離が負になり、
+      // k=1-tnが1を超えて隆起がampを超える(世界の端MAP_HALFで最大)
+      mh += f.kind === 'band' ? f.amp * (1 + (MAP_HALF - CITY_HALF) / f.depth) ** 2 : f.amp;
+    }
+    this.maxH = mh;
   }
 
   h(x: number, z: number): number {

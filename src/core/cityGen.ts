@@ -23,6 +23,7 @@ export interface CityData {
   plan: CityPlanKind;
   terrain: Terrain;
   buildings: Building[];
+  kindCounts: number[];    // 建物種類別の棟数(b.miの採番結果。renderのInstancedMesh確保数)
   cars: Car[];
   movingCars: number;      // cars配列の先頭movingCars台が走行車両。以降は駐車車両(行列は不変)
   trees: Tree[];
@@ -54,9 +55,9 @@ export function generateCityData(seed: string): CityData {
     buildings: [], trees: [], lotDecals: [] };
   const lotsRng = rngFor(seed, 'lots');
   for (const lot of po.pendingLots) addBuildingLot(gen, lot, lotsRng);
-  // 種類別メッシュ内の番号を採番
-  const counts = new Array<number>(BUILDING_KINDS).fill(0);
-  for (const b of gen.buildings) b.mi = counts[b.k]++;
+  // 種類別メッシュ内の番号を採番(countsはkindCountsとして返し、renderが確保数に使う)
+  const kindCounts = new Array<number>(BUILDING_KINDS).fill(0);
+  for (const b of gen.buildings) b.mi = kindCounts[b.k]++;
 
   // --- 車(道路パスに沿って走る) ---
   bakeRoadHeights(roadPaths, terrain);
@@ -178,7 +179,7 @@ export function generateCityData(seed: string): CityData {
 
   return {
     seed, plan, terrain,
-    buildings: gen.buildings, cars, movingCars, trees: gen.trees,
+    buildings: gen.buildings, kindCounts, cars, movingCars, trees: gen.trees,
     roadPaths, alleyPaths, groundPolys: po.groundPolys, lotDecals: gen.lotDecals,
   };
 }

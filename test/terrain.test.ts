@@ -73,6 +73,23 @@ describe('Terrain', () => {
     }
   });
 
+  it('maxHは全域でh()の上界(山フィーチャ同士の重なり込み)', () => {
+    let globalMax = -Infinity;
+    for (let i = 0; i < 60; i++) {
+      const t = mkTerrain(`MAXH-${i}`);
+      let hmax = -Infinity;
+      for (let x = -MAP_HALF; x <= MAP_HALF; x += 90) {
+        for (let z = -MAP_HALF; z <= MAP_HALF; z += 90) {
+          hmax = Math.max(hmax, t.h(x, z));
+        }
+      }
+      expect(hmax).toBeLessThanOrEqual(t.maxH + 1e-9);
+      globalMax = Math.max(globalMax, hmax);
+    }
+    // 山の重なりで固定上界600mを超えるシードが実在する(旧rayGroundHitの回帰確認)
+    expect(globalMax).toBeGreaterThan(600);
+  });
+
   it('山と水のフィーチャは重ならない', () => {
     for (const seed of SEEDS) {
       const { feats } = generateFeatures(rngFor(seed, 'features'));

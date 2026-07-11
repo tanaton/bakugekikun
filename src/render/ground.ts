@@ -2,7 +2,9 @@
 //
 // 破壊の跡(基礎跡・クレーター・焦げ跡)はすべて、起伏に完全に沿う地面テクスチャへ
 // 直接描き込む。3Dデカールは頂点間の直線補間が地面メッシュの起伏とずれて浮き・埋まりが
-// 出るため使わない。リストは時系列順に保持し、時間帯の塗り直しでも同順・同形で再現する
+// 出るため使わない。跡はリストに溜め直さず、透明な累積レイヤー(overlay)と地肌マスク
+// (dirtMask)へ焼き込んで捨てる。時間帯の塗り直しはベース再描画+レイヤー合成だけで済み、
+// 跡が何千件溜まってもコストが一定(全スタンプの再生をしない)
 
 import * as THREE from 'three';
 import type { CityData } from '../core/cityGen';
@@ -29,16 +31,23 @@ let gCtx: CanvasRenderingContext2D | null = null;
 let gSrcTex: THREE.CanvasTexture | null = null;
 // 地肌の露出済み領域マスク。地肌は不透明で塗るが「先に露出した領域には上書きしない」
 // ことで、露出済みの上に溜まった焦げ跡を後発の爆発が塗り潰さないようにする。
-// drawGroundの全再描画時はクリアして時系列順に作り直す
+// 画素は現在のパレットの地肌色で塗られており、時間帯切替では全体を再着色して
+// そのままベースへ合成する(αが露出領域、色が見た目を兼ねる)
 let dirtMask: HTMLCanvasElement | null = null;
 let dirtMaskCtx: CanvasRenderingContext2D | null = null;
 let dirtScratch: HTMLCanvasElement | null = null;   // 1クレーター分の作業用
 let dirtScratchCtx: CanvasRenderingContext2D | null = null;
+// 破壊跡の累積レイヤー(透明)。地肌以外の跡(焦げ・穴・基礎跡)を時系列順のまま溜め、
+// クレーターの地肌露出時には新規露出画素の古い跡を打ち抜く。時間帯の塗り直しは
+// ベース+dirtMask+このレイヤーの合成だけで再現できる
+let overlay: HTMLCanvasElement | null = null;
+let overlayCtx: CanvasRenderingContext2D | null = null;
 
 function ensureCanvases(): void {
   if (gCanvas) return;
   ({ canvas: gCanvas, ctx: gCtx } = makeCanvas(GROUND_TEX));
   ({ canvas: dirtMask, ctx: dirtMaskCtx } = makeCanvas(GROUND_TEX));
+  ({ canvas: overlay, ctx: overlayCtx } = makeCanvas(GROUND_TEX));
   ({ canvas: dirtScratch, ctx: dirtScratchCtx } = makeCanvas(320));
   gSrcTex = new THREE.CanvasTexture(gCanvas);
 }
@@ -62,15 +71,17 @@ export class GroundView {
   readonly mesh: THREE.Mesh;
   readonly tex: THREE.CanvasTexture;
   private readonly noiseCanvas: HTMLCanvasElement;
-  private readonly stamps: Stamp[] = [];
-  private readonly craters: Extract<Stamp, { kind: 'crater' }>[] = [];   // pushLotの走査用の別引き
-  private drawn = 0;      // gCanvasへ描き込み済みの件数
+  private readonly pending: Stamp[] = [];   // 未描画の跡(描き込んだらoverlay/dirtMaskに残して捨てる)
+  private readonly craters: Extract<Stamp, { kind: 'crater' }>[] = [];   // pushLotの穴判定用(数値のみの全履歴)
   private flushAt = 0;    // GPU転送の間引き用(連続爆撃で毎フレーム転送しない)
   private respecAt = 0;   // 部分転送後のGPUテクスチャ作り直し予約時刻(0=予約なし)
   private palette!: GroundPalette;   // 現在の時間帯パレット(drawGroundで確定。flushの差分描きが使う)
 
   constructor(private readonly city: CityData, noiseRng: Rng) {
     ensureCanvases();
+    // 破壊跡の累積レイヤーと地肌マスクはモジュール常設なので、新しい街ではまっさらに戻す
+    overlayCtx!.clearRect(0, 0, GROUND_TEX, GROUND_TEX);
+    dirtMaskCtx!.clearRect(0, 0, GROUND_TEX, GROUND_TEX);
     // 地面の質感ノイズ(シード決定)
     const noise = makeCanvas(512);
     this.noiseCanvas = noise.canvas;
@@ -105,17 +116,20 @@ export class GroundView {
   }
 
   // クレーターを登録する(scorch/nuke等の他の跡はpushStampでよい)。
-  // 水面は跡が残らない、はスタンプ機構側のルール(呼び出し側は無条件に登録してよい)
-  pushCrater(x: number, z: number, r: number): void {
-    if (this.city.terrain.inWater(x, z)) return;
+  // 水面は跡が残らない、はスタンプ機構側のルール(呼び出し側は無条件に登録してよい)。
+  // 戻り値は「跡を描いたか」。falseなら呼び出し側は基礎の消失(destroyAround)も
+  // 行わないこと(クレーターの見た目と基礎が消える範囲を常に一致させる)
+  pushCrater(x: number, z: number, r: number): boolean {
+    if (this.city.terrain.inWater(x, z)) return false;
     const st = { kind: 'crater' as const, x, z, r, seed: (Math.random() * 2 ** 31) | 0 };
-    this.stamps.push(st);
+    this.pending.push(st);
     this.craters.push(st);
+    return true;
   }
 
   pushStamp(st: Stamp): void {
     if (this.city.terrain.inWater(st.x, st.z)) return;
-    this.stamps.push(st);
+    this.pending.push(st);
   }
 
   // 基礎跡を登録する。ただしクレーター中心の深い穴(半径の内側50%)に入る場合は描かない。
@@ -126,19 +140,25 @@ export class GroundView {
       const dx = b.x - st.x, dz = b.z - st.z, rr = st.r * 0.5;
       if (dx * dx + dz * dz < rr * rr) return;
     }
-    this.stamps.push({ kind: 'lot', x: b.x, z: b.z, sx: b.sx, sz: b.sz, rot: b.rot });
+    this.pending.push({ kind: 'lot', x: b.x, z: b.z, sx: b.sx, sz: b.sz, rot: b.rot });
   }
 
+  // スタンプ1件をgCanvas(g)へ描き込み、同時に累積レイヤーへ焼き込む。
+  // 地肌はdirtMask(色付き)、それ以外の半透明の跡はoverlayに残るので、
+  // 時間帯の塗り直しはスタンプを再生せずレイヤー合成だけで再現できる
   private drawStamp(g: CanvasRenderingContext2D, G: GroundPalette, st: Stamp): void {
+    const o = overlayCtx!;
     const s = GROUND_SCALE, w2c = worldToTex;
     const px = w2c(st.x), pz = w2c(st.z);
     if (st.kind === 'lot') {             // 圧壊した建物の基礎跡
-      g.save();
-      g.translate(px, pz);
-      g.rotate(-st.rot);
-      g.fillStyle = FOUNDATION_STYLE;
-      g.fillRect(-st.sx / 2 * s, -st.sz / 2 * s, st.sx * s, st.sz * s);
-      g.restore();
+      for (const c of [g, o]) {
+        c.save();
+        c.translate(px, pz);
+        c.rotate(-st.rot);
+        c.fillStyle = FOUNDATION_STYLE;
+        c.fillRect(-st.sx / 2 * s, -st.sz / 2 * s, st.sx * s, st.sz * s);
+        c.restore();
+      }
     } else if (st.kind === 'crater') {   // 舗装が割れて地肌がのぞくクレーター + 中心の深い穴
       const r = st.r * s;
       const rand = mulberry32(st.seed);
@@ -170,17 +190,25 @@ export class GroundView {
         0, 0, dirtScratch!.width, dirtScratch!.height);
       sc.restore();
       g.drawImage(dirtScratch!, px - half, pz - half);
-      // 今回の露出領域をマスクへ追加
+      // 新規露出した画素の上に溜まっていた古い跡は消し飛ぶ(時系列の上書きを累積レイヤーでも再現)
+      o.save();
+      o.globalCompositeOperation = 'destination-out';
+      o.drawImage(dirtScratch!, px - half, pz - half);
+      o.restore();
+      // 今回の露出領域をマスクへ追加(現在のパレットの地肌色で。時間帯切替時に全体を再着色する)
       dirtMaskCtx!.save();
+      dirtMaskCtx!.fillStyle = G.crater;
       dirtMaskCtx!.translate(px, pz);
       dirtMaskCtx!.fill(outer);
       dirtMaskCtx!.restore();
       // 中心の深い穴は最後の爆発が上書きしてよい
-      g.save();
-      g.translate(px, pz);
-      g.fillStyle = 'rgba(10,9,8,0.55)';
-      g.fill(hole);
-      g.restore();
+      for (const c of [g, o]) {
+        c.save();
+        c.translate(px, pz);
+        c.fillStyle = 'rgba(10,9,8,0.55)';
+        c.fill(hole);
+        c.restore();
+      }
     } else {                           // 焦げ跡(scorch=通常 / nuke=核)の放射状グラデーション
       const r = st.r * s;
       const grd = g.createRadialGradient(px, pz, r * (st.kind === 'nuke' ? 0.09 : 0.06), px, pz, r);
@@ -191,8 +219,10 @@ export class GroundView {
         grd.addColorStop(0, 'rgba(8,8,8,0.9)'); grd.addColorStop(0.45, 'rgba(12,11,9,0.78)');
         grd.addColorStop(0.75, 'rgba(16,13,11,0.4)'); grd.addColorStop(1, 'rgba(20,16,12,0)');
       }
-      g.fillStyle = grd;
-      g.beginPath(); g.arc(px, pz, r, 0, Math.PI * 2); g.fill();
+      for (const c of [g, o]) {
+        c.fillStyle = grd;
+        c.beginPath(); c.arc(px, pz, r, 0, Math.PI * 2); c.fill();
+      }
     }
   }
 
@@ -200,7 +230,7 @@ export class GroundView {
   // GPUへも跡のダーティ矩形だけを部分転送し、毎回の全量(2048²≈16.8MB)アップロードを避ける。
   // rendererなし(nodeテスト)や、離れた複数の跡で矩形が肥大したときは全量転送にフォールバック
   flush(renderer: THREE.WebGLRenderer | null, simT: number): void {
-    if (this.drawn >= this.stamps.length) {
+    if (!this.pending.length) {
       // 爆撃が一段落したら一度だけGPUテクスチャを作り直す。部分転送(texSubImage2D +
       // generateMipmap)を受けたテクスチャは、モバイルGPUドライバの圧縮レイアウト最適化が
       // 外れたまま残り、全画面を覆う地面のサンプリングが恒常的に重くなる(エフェクトが
@@ -215,13 +245,13 @@ export class GroundView {
     if (simT < this.flushAt) return;
     this.flushAt = simT + 0.15;
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
-    for (; this.drawn < this.stamps.length; this.drawn++) {
-      const st = this.stamps[this.drawn];
+    for (const st of this.pending) {
       this.drawStamp(gCtx!, this.palette, st);
       const px = worldToTex(st.x), pz = worldToTex(st.z), r = stampRadiusPx(st);
       x0 = Math.min(x0, px - r); z0 = Math.min(z0, pz - r);
       x1 = Math.max(x1, px + r); z1 = Math.max(z1, pz + r);
     }
+    this.pending.length = 0;
     x0 = Math.max(0, Math.floor(x0)); z0 = Math.max(0, Math.floor(z0));
     x1 = Math.min(GROUND_TEX, Math.ceil(x1)); z1 = Math.min(GROUND_TEX, Math.ceil(z1));
     this.respecAt = simT + RESPEC_DELAY;   // 新しい跡が続く間は作り直しを先送りする
@@ -237,6 +267,9 @@ export class GroundView {
   // 地面テクスチャの描画(時間帯トグルで呼び直す)
   drawGround(G: GroundPalette): void {
     this.palette = G;
+    // 未描画の跡を先に累積レイヤーへ焼き込んでおく(gCanvasはこの後まるごと描き直す)
+    for (const st of this.pending) this.drawStamp(gCtx!, G, st);
+    this.pending.length = 0;
     const TEX = GROUND_TEX, s = GROUND_SCALE, w2c = worldToTex;
     const g = gCtx!;
     const city = this.city;
@@ -329,10 +362,16 @@ export class GroundView {
     g.setLineDash([6, 8]);
     for (const rp of city.roadPaths) if (rp.major) strokeRoad(rp.pts, rp.loop, 1 / s, G.lane);   // センターライン(1px)
     g.setLineDash([]);
-    // 破壊の跡(基礎跡・クレーター・焦げ跡)を時系列順に描き直す(地肌マスクも作り直す)
-    dirtMaskCtx!.clearRect(0, 0, dirtMask!.width, dirtMask!.height);
-    for (const st of this.stamps) this.drawStamp(g, G, st);
-    this.drawn = this.stamps.length;
+    // 破壊の跡: 露出済みの地肌(dirtMask)を現在のパレットの地肌色に着色し直してから、
+    // 破壊跡の累積レイヤー(overlay)ごと重ねる。スタンプを1件ずつ再生しないので、
+    // 跡が何千件溜まっても時間帯切替のコストは一定
+    dirtMaskCtx!.save();
+    dirtMaskCtx!.globalCompositeOperation = 'source-in';
+    dirtMaskCtx!.fillStyle = G.crater;
+    dirtMaskCtx!.fillRect(0, 0, TEX, TEX);
+    dirtMaskCtx!.restore();
+    g.drawImage(dirtMask!, 0, 0);
+    g.drawImage(overlay!, 0, 0);
     this.tex.needsUpdate = true;
   }
 }

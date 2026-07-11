@@ -70,6 +70,7 @@ function makeFakeGfx(): Gfx {
   const { sun, camera, sunShadow } = mkSunRig(scene);
   return {
     canvas: null as unknown as HTMLCanvasElement,
+    quality: 'high',
     renderer: null as unknown as THREE.WebGLRenderer,
     scene, camera, hemi, sun,
     sunShadow,
@@ -147,6 +148,19 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
     for (let i = 0; i < 200; i++) { now += 16; stepSim(world, 0.016, now); }
     expect(world.sim.stats.bDead).toBeGreaterThan(10);
 
+    // 水面の爆心は跡を残さない(pushCraterがfalse)。explosions側はこの戻り値で
+    // destroyAroundのクレーター半径を0にし、岸辺の基礎だけ消える不整合を防ぐ
+    let wx = 0, wz = 0, foundWater = false;
+    for (let x = -2500; x <= 2500 && !foundWater; x += 100) {
+      for (let z = -2500; z <= 2500 && !foundWater; z += 100) {
+        if (world.city.terrain.inWater(x, z)) { wx = x; wz = z; foundWater = true; }
+      }
+    }
+    expect(foundWater).toBe(true);   // BAKUGEKI-01には水域がある
+    expect(world.view.ground.pushCrater(wx, wz, 50)).toBe(false);
+    const landB = world.city.buildings[0];
+    expect(world.view.ground.pushCrater(landB.x, landB.z, 50)).toBe(true);
+
     // 時間帯トグル
     applyTime(world, 'dusk');
     expect(world.settings.timeMode).toBe('dusk');
@@ -216,6 +230,11 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
     for (let i = 0; i < 900 && busy(); i++) { now += 16; stepSim(world, 0.016, now); }
     expect(busy()).toBe(false);
     for (let i = 0; i < 20; i++) { now += 16; stepSim(world, 0.016, now); }   // 残りのflushを吐き切る
+    // busyの待機中に跡が3秒以上途切れると、作り直しがここまでに一度走っていることがある
+    // (仕様どおり)。計測を安定させるため、跡を1件焼いてflushさせてから静穏期を測り直す
+    world.view.ground.pushStamp({ kind: 'scorch', x: b.x, z: b.z, r: 30 });
+    now += 200; stepSim(world, 0.2, now);
+    disposed = 0;
     const vQuiet = tex.version;
     // 静穏期間はまとめて大きなdtで送る(時刻を進めるだけの区間を16ms刻みで数百回回さない)
     const bigDt = 0.5;

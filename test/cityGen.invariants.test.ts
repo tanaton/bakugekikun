@@ -43,13 +43,15 @@ describe('generateCityData 不変条件', () => {
       mis.forEach((mi, idx) => check(mi === idx, () => `種類${k}のmiが非連番`));
     }
 
-    // 道路: 点間隔がROAD_STEP以下(折れ点をまたぐ弦は短くなる)、進行方向が正規化済み
+    // 道路: 点間隔がほぼROAD_STEP、進行方向が正規化済み。
+    // 環状路(と山で刈られたその断片)は周長を等分したステップで刻まれるため
+    // ROAD_STEPより最大+17%(3等分時の丸め上限)伸びうる。折れ点をまたぐ弦は短くなる
     expect(city.roadPaths.length).toBeGreaterThan(0);
     for (const rp of city.roadPaths) {
       check(rp.pts.length >= 3, () => `道路の点数が不足 ${rp.pts.length}`);
       for (let i = 1; i < rp.pts.length; i++) {
         const d = Math.hypot(rp.pts[i].x - rp.pts[i - 1].x, rp.pts[i].z - rp.pts[i - 1].z);
-        check(d <= ROAD_STEP + 1e-6 && d > ROAD_STEP / Math.SQRT2 - 0.01,
+        check(d <= ROAD_STEP * 1.17 + 1e-6 && d > ROAD_STEP / Math.SQRT2 - 0.01,
           () => `道路の点間隔が不正 ${d}`);
       }
       for (const p of rp.pts) {

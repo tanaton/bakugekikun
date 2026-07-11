@@ -131,3 +131,8 @@ export function addBuildingLot(city: GenCity, lot: Lot, rng: Rng): void {
 export function isHouseZone(cityHouseTh: number, distC: number, rng: Rng): boolean {
   return distC > cityHouseTh + (rng() - 0.5) * 0.14;
 }
+
+// 区画分割のピッチ(m)。碁盤目・放射環状の両プランナーで共有し、
+// 住宅・商業の区画密度がプラン種別で食い違わないようにする
+export const housePitch = (rng: Rng): number => 15 + rng() * 6;
+export const blockPitch = (rng: Rng): number => 26 + rng() * 26;

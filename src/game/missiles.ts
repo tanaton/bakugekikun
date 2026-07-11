@@ -49,7 +49,6 @@ export function prewarmShaders(gfx: Gfx): void {
 
 // 地形高さ場とレイの交差点。地面メッシュへのレイキャスト(数万三角形の総当たりで
 // 1クリック数msかかる)を避け、解析的なterrain.hを等分マーチ+二分法で詰める
-const MAX_TERRAIN_H = 600;   // terrain.hの上界(基礎起伏 + 山の隆起の最大値に余裕を持たせた値)
 const _rayPt = new THREE.Vector3();
 function rayGroundHit(ray: THREE.Ray, terrain: Terrain): THREE.Vector3 | null {
   if (ray.direction.y >= -1e-4) return null;   // 水平・上向きのレイは地面に届かない
@@ -57,12 +56,14 @@ function rayGroundHit(ray: THREE.Ray, terrain: Terrain): THREE.Vector3 | null {
     ray.at(t, _rayPt);
     return _rayPt.y <= terrain.h(_rayPt.x, _rayPt.z);
   };
-  // 地形が存在しうる高さ帯[WATER_BED_Y, MAX_TERRAIN_H]だけを刻む(尾根を跨ぎ越さない程度に細かく)
-  const t0 = Math.max(0, (ray.origin.y - MAX_TERRAIN_H) / -ray.direction.y);
+  // 地形が存在しうる高さ帯[WATER_BED_Y, terrain.maxH]だけを刻む。
+  // 刻み幅は高度換算で約3m(尾根を跨ぎ越さない程度に細かく)、山の多い街ほど帯が広い
+  const t0 = Math.max(0, (ray.origin.y - terrain.maxH) / -ray.direction.y);
   const t1 = (ray.origin.y - WATER_BED_Y) / -ray.direction.y;
+  const steps = Math.min(600, Math.ceil((terrain.maxH - WATER_BED_Y) / 3));
   let lo = t0, hi = -1;
-  for (let i = 1; i <= 200; i++) {
-    const t = t0 + (t1 - t0) * i / 200;
+  for (let i = 1; i <= steps; i++) {
+    const t = t0 + (t1 - t0) * i / steps;
     if (below(t)) { hi = t; break; }
     lo = t;
   }

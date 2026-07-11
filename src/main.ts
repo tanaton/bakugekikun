@@ -6,9 +6,7 @@ import { startLoop } from './game/loop';
 import { prewarmShaders, requestStrike } from './game/missiles';
 import { WEAPONS } from './game/weapons';
 import { applyTime, createWorld, regenerate } from './game/world';
-import {
-  applyQuality, createGfx, DEFAULT_QUALITY, QUALITY_MODES, resizeGfx, type QualityMode,
-} from './render/gfx';
+import { applyQuality, createGfx, QUALITY_MODES, resizeGfx } from './render/gfx';
 import { isSoundOn, toggleSound } from './ui/audio';
 import {
   $, setPlanName, setQualityLabel, setSoundLabel, setTimeLabel, setWeaponLabel, updateHUD,
@@ -57,13 +55,11 @@ $('timeBtn').addEventListener('click', () => {
   applyTime(world, mode);
   setTimeLabel(mode);
 });
-// 画質はUIとgfxだけの関心事(simは読まない)なのでSettingsに持たずここで所有する。
+// 画質はUIとgfxだけの関心事(simは読まない)なのでSettingsに持たずgfx.qualityが唯一の状態。
 // 初期状態はcreateGfxがDEFAULT_QUALITYを適用済み(既定は最高画質)
-let quality: QualityMode = DEFAULT_QUALITY;
 $('qualityBtn').addEventListener('click', () => {
-  quality = QUALITY_MODES[(QUALITY_MODES.indexOf(quality) + 1) % QUALITY_MODES.length];
-  applyQuality(gfx, quality);
-  setQualityLabel(quality);
+  applyQuality(gfx, QUALITY_MODES[(QUALITY_MODES.indexOf(gfx.quality) + 1) % QUALITY_MODES.length]);
+  setQualityLabel(gfx.quality);
 });
 $('weaponBtn').addEventListener('click', () => {
   world.settings.weaponIdx = (world.settings.weaponIdx + 1) % WEAPONS.length;
@@ -78,7 +74,7 @@ wireProfiler();
 
 // ボタンの初期ラベルはJS側の状態定義から入れる(HTMLとの文言二重管理を避ける)
 setTimeLabel(world.settings.timeMode);
-setQualityLabel(quality);
+setQualityLabel(gfx.quality);
 setSoundLabel(isSoundOn());
 const w0 = WEAPONS[world.settings.weaponIdx];
 setWeaponLabel(w0.label, w0.hot);

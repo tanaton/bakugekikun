@@ -143,7 +143,7 @@ export class SunShadow {
     this.placeFar();
   }
 
-  // 影品質: 両マップの解像度を倍率で変える(高=1 / 低=0.5)。既存のレンダー
+  // 影品質: 両マップの解像度を倍率で変える(高=1 / 中=0.5。低は影OFFなので呼ばれない)。既存のレンダー
   // ターゲットはdisposeして次の影パスで作り直させる。解像度依存のnormalBiasも
   // ここで反映する(updateはshadowR変化時しか再計算しないため)
   setResolution(scale: number): void {

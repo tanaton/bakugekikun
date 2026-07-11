@@ -84,9 +84,9 @@ export function detonate(world: World, p: { x: number; y: number; z: number }, R
   // --- 衝撃波リング(発光 + 土埃の二重) ---
   ringFx(world, FX.ringAddD(0xffd9a8, 0.95), p.x, gy + 2.5, p.z, 0.7, 8 * f, 420 * f, 0.55, 0.95);
   ringFx(world, FX.ringD(0x8a7458, 0.5), p.x, gy + 1.8, p.z, 1.5, 12 * f, 520 * f, 0.6, 0.5);
-  // --- クレーターと焦げ跡を地面テクスチャへ焼き込む(水中はGroundView側が弾く) ---
-  const craterR = R * CRATER_RATIO;
-  view.ground.pushCrater(p.x, p.z, craterR);
+  // --- クレーターと焦げ跡を地面テクスチャへ焼き込む(水中はGroundView側が弾く)。
+  // 弾かれたら基礎の消失も行わない(クレーターの見た目と消える範囲を一致させる) ---
+  const craterR = view.ground.pushCrater(p.x, p.z, R * CRATER_RATIO) ? R * CRATER_RATIO : 0;
   view.ground.pushStamp({ kind: 'scorch', x: p.x, z: p.z, r: R * 1.6 });
   // --- 火球パーティクル(白核 → 橙 → 深紅の三層) ---
   const cnt = (n: number): number => Math.max(4, Math.round(n * f));
@@ -267,9 +267,9 @@ export function detonateNuke(world: World, p: { x: number; y: number; z: number 
   ringFx(world, FX.ringD(0x8a7458, 0.6), p.x, gy + 2, p.z, 3.5, 30, 1900, 0.6, 0.6);
   // --- 上空の凝結リング(ウィルソン雲) ---
   ringFx(world, FX.ringD(0xf0f4f8, 0.55), p.x, gy + 260, p.z, 2.2, 80, 850, 0.7, 0.55);
-  // --- 巨大な焦げ跡と舗装の破壊跡を地面テクスチャへ焼き込む(水中はGroundView側が弾く) ---
-  const craterR = R * CRATER_RATIO;
-  view.ground.pushCrater(p.x, p.z, craterR);
+  // --- 巨大な焦げ跡と舗装の破壊跡を地面テクスチャへ焼き込む(水中はGroundView側が弾く)。
+  // 弾かれたら基礎の消失も行わない(クレーターの見た目と消える範囲を一致させる) ---
+  const craterR = view.ground.pushCrater(p.x, p.z, R * CRATER_RATIO) ? R * CRATER_RATIO : 0;
   view.ground.pushStamp({ kind: 'nuke', x: p.x, z: p.z, r: R * 1.3 });
   // --- 土煙・スパーク・瓦礫 ---
   for (let i = 0; i < 150; i++) {

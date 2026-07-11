@@ -2,7 +2,7 @@
 
 import type { CityPlanKind } from '../core/types';
 import type { HudStats } from '../game/simState';
-import type { ShadowMode } from '../render/gfx';
+import type { QualityMode } from '../render/gfx';
 import type { TimeMode } from '../render/sky';
 
 export const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -58,8 +58,8 @@ export function setTimeLabel(mode: TimeMode): void {
   $('timeBtn').textContent = mode === 'day' ? '時間帯: 昼' : '時間帯: 夕暮れ';
 }
 
-export function setShadowLabel(mode: ShadowMode): void {
-  $('shadowBtn').textContent = { high: '影: 高', low: '影: 低', off: '影: OFF' }[mode];
+export function setQualityLabel(mode: QualityMode): void {
+  $('qualityBtn').textContent = { high: '画質: 高', mid: '画質: 中', low: '画質: 低' }[mode];
 }
 
 export function setSoundLabel(on: boolean): void {

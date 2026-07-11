@@ -39,7 +39,8 @@ button{
 }
 button:hover{ background:rgba(255,176,82,.12); }
 button:focus-visible{ outline:1px solid var(--amber); outline-offset:1px; }
-/* ---- profiler (Pキーで表示) ---- */
+/* ---- profiler (Pキーまたはfps表示のタップで表示) ---- */
+#perf{ cursor:pointer; }
 #prof{
   display:none; margin-top:6px; padding-top:6px; border-top:1px solid var(--line-dim);
   font-size:10px; line-height:1.55; color:var(--dim); white-space:pre;

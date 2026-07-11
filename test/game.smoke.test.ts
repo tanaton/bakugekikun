@@ -56,7 +56,7 @@ const { requestStrike } = await import('../src/game/missiles');
 const { stepSim } = await import('../src/game/loop');
 const { B } = await import('../src/core/types');
 const { GROUND_TEX } = await import('../src/core/config');
-const { FLUSH_FULL_RATIO } = await import('../src/render/ground');
+const { FLUSH_FULL_RATIO, RESPEC_DELAY } = await import('../src/render/ground');
 const { HIDDEN_MAT } = await import('../src/render/instanced');
 import type { Gfx } from '../src/render/gfx';
 
@@ -204,5 +204,30 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
     expect(w * h).toBeLessThan(GROUND_TEX * GROUND_TEX * FLUSH_FULL_RATIO);
     expect(pos.x).toBe(box.min.x);
     expect(pos.y).toBe(box.min.y);
+
+    // 爆撃が一段落したら、GPUテクスチャの作り直し(dispose + 全量再アップロード)が一度だけ走る。
+    // 部分転送で外れたモバイルGPUドライバのテクスチャ最適化を戻すため
+    const tex = world.view.ground.tex;
+    let disposed = 0;
+    tex.addEventListener('dispose', () => disposed++);
+    // 崩壊・誘爆・時間差の炎上崩壊が出し尽くすまで進めてから、静穏期間(RESPEC_DELAY)を跨ぐ
+    const busy = (): boolean => world.sim.collapsing.length > 0 ||
+      world.sim.delayedBooms.length > 0 || world.sim.burningBldgs.length > 0;
+    for (let i = 0; i < 900 && busy(); i++) { now += 16; stepSim(world, 0.016, now); }
+    expect(busy()).toBe(false);
+    for (let i = 0; i < 20; i++) { now += 16; stepSim(world, 0.016, now); }   // 残りのflushを吐き切る
+    const vQuiet = tex.version;
+    // 静穏期間はまとめて大きなdtで送る(時刻を進めるだけの区間を16ms刻みで数百回回さない)
+    const bigDt = 0.5;
+    const bigSteps = (sec: number): void => {
+      for (let i = 0; i < Math.ceil(sec / bigDt); i++) { now += bigDt * 1000; stepSim(world, bigDt, now); }
+    };
+    bigSteps(RESPEC_DELAY + 1);
+    expect(disposed).toBe(1);
+    expect(tex.version).toBe(vQuiet + 1);   // needsUpdateで全量再アップロードを予約
+    // 以後は静かなまま(作り直しが繰り返されない)
+    bigSteps(4);
+    expect(disposed).toBe(1);
+    expect(tex.version).toBe(vQuiet + 1);
   }, 60000);
 });

@@ -6,14 +6,16 @@ import { startLoop } from './game/loop';
 import { prewarmShaders, requestStrike } from './game/missiles';
 import { WEAPONS } from './game/weapons';
 import { applyTime, createWorld, regenerate } from './game/world';
-import { applyShadowMode, createGfx, resizeGfx, type ShadowMode } from './render/gfx';
+import {
+  applyQuality, createGfx, DEFAULT_QUALITY, QUALITY_MODES, resizeGfx, type QualityMode,
+} from './render/gfx';
 import { isSoundOn, toggleSound } from './ui/audio';
 import {
-  $, setPlanName, setShadowLabel, setSoundLabel, setTimeLabel, setWeaponLabel, updateHUD,
+  $, setPlanName, setQualityLabel, setSoundLabel, setTimeLabel, setWeaponLabel, updateHUD,
 } from './ui/hud';
 import { createInput } from './ui/input';
 import { wireJoystick } from './ui/joystick';
-import { wireProfilerKey } from './ui/profiler';
+import { wireProfiler } from './ui/profiler';
 
 const canvas = $('gl') as HTMLCanvasElement;
 const seedInput = $('seed') as HTMLInputElement;
@@ -55,15 +57,13 @@ $('timeBtn').addEventListener('click', () => {
   applyTime(world, mode);
   setTimeLabel(mode);
 });
-// 影品質はUIとgfxだけの関心事(simは読まない)なのでSettingsに持たずここで所有する。
-// 起動時にも一度applyして、createGfxの初期状態(影ON・高解像度)とラベルの一致を保証する
-let shadowMode: ShadowMode = 'high';
-applyShadowMode(gfx, shadowMode);
-$('shadowBtn').addEventListener('click', () => {
-  const order: ShadowMode[] = ['high', 'low', 'off'];
-  shadowMode = order[(order.indexOf(shadowMode) + 1) % order.length];
-  applyShadowMode(gfx, shadowMode);
-  setShadowLabel(shadowMode);
+// 画質はUIとgfxだけの関心事(simは読まない)なのでSettingsに持たずここで所有する。
+// 初期状態はcreateGfxがDEFAULT_QUALITYを適用済み(既定は最高画質)
+let quality: QualityMode = DEFAULT_QUALITY;
+$('qualityBtn').addEventListener('click', () => {
+  quality = QUALITY_MODES[(QUALITY_MODES.indexOf(quality) + 1) % QUALITY_MODES.length];
+  applyQuality(gfx, quality);
+  setQualityLabel(quality);
 });
 $('weaponBtn').addEventListener('click', () => {
   world.settings.weaponIdx = (world.settings.weaponIdx + 1) % WEAPONS.length;
@@ -74,11 +74,11 @@ $('soundBtn').addEventListener('click', () => {
   setSoundLabel(toggleSound());
 });
 $('moreBtn').addEventListener('click', () => $('cmd').classList.toggle('open'));
-wireProfilerKey();
+wireProfiler();
 
 // ボタンの初期ラベルはJS側の状態定義から入れる(HTMLとの文言二重管理を避ける)
 setTimeLabel(world.settings.timeMode);
-setShadowLabel(shadowMode);
+setQualityLabel(quality);
 setSoundLabel(isSoundOn());
 const w0 = WEAPONS[world.settings.weaponIdx];
 setWeaponLabel(w0.label, w0.hot);

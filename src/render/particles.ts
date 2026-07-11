@@ -33,8 +33,22 @@ export interface Particle extends Slotted {
   baseAlpha: number; gy: number;
 }
 
+// 全フィールドが既定値のレコードを作る(spawnの新規確保と間引きの書き捨て先で共用)
+const blankParticle = (): Particle => ({
+  slot: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 1, size: 0, age: 0,
+  grav: 0, drag: 0, fadeIn: 0, growth: 0, baseAlpha: 1, gy: 0,
+});
+
+// 間引いたspawnの書き捨て先(全プール共有)。プールに入れず描画もしない(呼び出し側は
+// 返り値へ無条件にフィールドを書くだけなので、捨てレコードを返せば分岐が要らない)
+const rejected = blankParticle();
+
 export class ParticlePool {
   readonly max: number;
+  // パーティクル密度(画質設定が変える)。1未満ではspawnを確率で間引いて
+  // バースト時のフィル負荷を抑える。加算合成の巨大スプライトで重いフレームが続くと、
+  // iOS WebKitが描画更新の間引きを固定化し、爆撃後も画面をロックするまでfpsが戻らなくなる
+  density = 1;
   private readonly pool: SlotPool<Particle>;
   private readonly pos: Float32Array;
   private readonly col: Float32Array;
@@ -84,10 +98,8 @@ export class ParticlePool {
   // 直接埋める(spawnはホットパスなのでspecオブジェクトを確保させない)。
   // レコードは死んだ粒子のものを使い回すため、全フィールドをここでデフォルトへ戻す
   spawn(x: number, y: number, z: number, r: number, g: number, b: number): Particle {
-    const p = this.pool.take() ?? {
-      slot: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 1, size: 0, age: 0,
-      grav: 0, drag: 0, fadeIn: 0, growth: 0, baseAlpha: 1, gy: 0,
-    };
+    if (this.density < 1 && Math.random() >= this.density) return rejected;
+    const p = this.pool.take() ?? blankParticle();
     p.x = x; p.y = y; p.z = z;
     p.vx = 0; p.vy = 0; p.vz = 0;
     p.life = 1; p.size = 0; p.age = 0;

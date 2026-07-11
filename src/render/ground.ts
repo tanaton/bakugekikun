@@ -52,6 +52,9 @@ const stampRadiusPx = (st: Stamp): number => 2 + GROUND_SCALE * (
 // ダーティ矩形がテクスチャ面積のこの割合を超えたら全量転送の方が安い(テストと共有)
 export const FLUSH_FULL_RATIO = 0.35;
 
+// 最後の部分転送からこの秒数だけ静かならGPUテクスチャを作り直す(テストと共有)
+export const RESPEC_DELAY = 3;
+
 const _box = new THREE.Box2();
 const _dstPos = new THREE.Vector2();
 
@@ -63,6 +66,7 @@ export class GroundView {
   private readonly craters: Extract<Stamp, { kind: 'crater' }>[] = [];   // pushLotの走査用の別引き
   private drawn = 0;      // gCanvasへ描き込み済みの件数
   private flushAt = 0;    // GPU転送の間引き用(連続爆撃で毎フレーム転送しない)
+  private respecAt = 0;   // 部分転送後のGPUテクスチャ作り直し予約時刻(0=予約なし)
   private palette!: GroundPalette;   // 現在の時間帯パレット(drawGroundで確定。flushの差分描きが使う)
 
   constructor(private readonly city: CityData, noiseRng: Rng) {
@@ -196,7 +200,19 @@ export class GroundView {
   // GPUへも跡のダーティ矩形だけを部分転送し、毎回の全量(2048²≈16.8MB)アップロードを避ける。
   // rendererなし(nodeテスト)や、離れた複数の跡で矩形が肥大したときは全量転送にフォールバック
   flush(renderer: THREE.WebGLRenderer | null, simT: number): void {
-    if (this.drawn >= this.stamps.length || simT < this.flushAt) return;
+    if (this.drawn >= this.stamps.length) {
+      // 爆撃が一段落したら一度だけGPUテクスチャを作り直す。部分転送(texSubImage2D +
+      // generateMipmap)を受けたテクスチャは、モバイルGPUドライバの圧縮レイアウト最適化が
+      // 外れたまま残り、全画面を覆う地面のサンプリングが恒常的に重くなる(エフェクトが
+      // 消えてもfpsが落ちたままになる)。破棄→全量再アップロードで最適化の効いた状態に戻す
+      if (this.respecAt && simT >= this.respecAt) {
+        this.respecAt = 0;
+        this.tex.dispose();
+        this.tex.needsUpdate = true;
+      }
+      return;
+    }
+    if (simT < this.flushAt) return;
     this.flushAt = simT + 0.15;
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
     for (; this.drawn < this.stamps.length; this.drawn++) {
@@ -208,9 +224,10 @@ export class GroundView {
     }
     x0 = Math.max(0, Math.floor(x0)); z0 = Math.max(0, Math.floor(z0));
     x1 = Math.min(GROUND_TEX, Math.ceil(x1)); z1 = Math.min(GROUND_TEX, Math.ceil(z1));
+    this.respecAt = simT + RESPEC_DELAY;   // 新しい跡が続く間は作り直しを先送りする
     if (!renderer || x1 <= x0 || z1 <= z0 ||
         (x1 - x0) * (z1 - z0) > GROUND_TEX * GROUND_TEX * FLUSH_FULL_RATIO) {
-      this.tex.needsUpdate = true;
+      this.tex.needsUpdate = true;   // 全量転送でも既存GLテクスチャへの上書きなので作り直しは行う
       return;
     }
     _box.min.set(x0, z0); _box.max.set(x1, z1);

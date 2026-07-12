@@ -1,6 +1,7 @@
 // 爆発の演出システム(通常爆発・二次爆発・戦術核・汎用メッシュエフェクト)
 
 import * as THREE from 'three';
+import { inPond } from '../core/ponds';
 import type { FxMesh } from '../render/fxPool';
 import { decayLights, fireLight } from '../render/lightPool';
 import { flashNuke } from '../ui/hud';
@@ -170,7 +171,7 @@ export function detonate(world: World, p: { x: number; y: number; z: number }, R
 // 二次爆発(小型・時間差で誘爆する)
 export function miniBoom(world: World, d: { x: number; z: number }): void {
   const { gfx, city, debris } = world;
-  if (city.terrain.inWater(d.x, d.z)) return;   // 水面下からは誘爆させない(着弾同様、水は跡も演出も残さない)
+  if (city.terrain.inWater(d.x, d.z) || inPond(city.ponds, d.x, d.z)) return;   // 水面下からは誘爆させない(着弾同様、水は跡も演出も残さない)
   const gy = city.terrain.h(d.x, d.z);
   flashLight(world, d.x, d.z, 3.5, gy);
   growFx(world, gfx.fx.sphereAdd(0xff7a30, 0.95), d.x, gy + 6, d.z, 0.5, 4, 42, 0.5, 0.95, 1.2);

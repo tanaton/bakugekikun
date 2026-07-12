@@ -4,12 +4,13 @@
 // 乱数はサブシステム別ストリーム(rngFor)に分割してあり、例えば木の生成ロジックを
 // 変えても建物や道路の配置は変わらない。
 
-import { N_CARS, PLACE_FOREST, PLACE_TREE, ROAD_STEP, inMap } from './config';
+import { CAR_MAJOR_TRAFFIC, N_CARS, PLACE_FOREST, PLACE_TREE, ROAD_STEP, inMap } from './config';
 import { hslToRgb, jitterHdr } from './color';
 import { addBuildingLot, BUILDING_KINDS, pushTree, type GenCity } from './lots';
 import { lotToWorld } from './math';
 import { bakeRoadHeights, carPose, cullMountainAlleys, cullMountainRoads, laneOffset, RoadMask } from './roads';
 import { genGridPlan, genRadialPlan } from './plans';
+import type { Pond } from './ponds';
 import { pick, rngFor } from './rng';
 import { SpatialHash } from './spatialHash';
 import { bandPt, generateFeatures, Terrain } from './terrain';
@@ -29,6 +30,8 @@ export interface CityData {
   trees: Tree[];
   roadPaths: RoadPath[];
   alleyPaths: AlleyPath[];
+  parkPaths: AlleyPath[];   // 公園の園路
+  ponds: Pond[];            // 公園の池(テクスチャのみの水域。爆撃跡は残らない)
   groundPolys: GroundPoly[];
   lotDecals: LotDecal[];
 }
@@ -49,6 +52,11 @@ export function generateCityData(seed: string): CityData {
     : genGridPlan(planRng, plan === 'organic', features.cityCore, features.cityHouseTh);
   const roadPaths = cullMountainRoads(po.roadPaths, terrain);   // 山にかかった道路・路地は消して森にする
   const alleyPaths = cullMountainAlleys(po.alleyPaths, terrain);
+  const parkPaths = cullMountainAlleys(po.parkPaths, terrain);
+  // 地形フィーチャ(山・湾)は公園ポリゴンの上に描かれるため、重なった池は作らない
+  const ponds = po.ponds.filter(pd =>
+    ![[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].some(([ox, oz]) =>
+      terrain.roadBlocked(pd.x + ox * pd.r, pd.z + oz * pd.r)));
 
   // --- 建物・民家(プラン生成が出したロットから) ---
   const gen: GenCity = { terrain, cityHouseTh: features.cityHouseTh,
@@ -63,8 +71,19 @@ export function generateCityData(seed: string): CityData {
   bakeRoadHeights(roadPaths, terrain);
   const carsRng = rngFor(seed, 'cars');
   const cars: Car[] = [];
+  // 道路の抽選重み = 道路長 × (大通りはCAR_MAJOR_TRAFFIC倍)。長さで重み付けするので
+  // 車密度(台/m)が道路種別ごとに一定になり、大通りだけ密度が約CAR_MAJOR_TRAFFIC倍になる
+  const roadCum: number[] = [];
+  let roadTotalW = 0;
+  for (const rp of roadPaths) {
+    roadTotalW += (rp.pts.length - 1) * (rp.major ? CAR_MAJOR_TRAFFIC : 1);
+    roadCum.push(roadTotalW);
+  }
   for (let i = 0; i < N_CARS; i++) {
-    const ri = Math.floor(carsRng() * roadPaths.length);
+    const rw = carsRng() * roadTotalW;
+    let lo = 0, hi = roadCum.length - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (roadCum[mid] <= rw) lo = mid + 1; else hi = mid; }
+    const ri = lo;
     const rp = roadPaths[ri];
     const dir: 1 | -1 = carsRng() < 0.5 ? 1 : -1;
     const c: MovingCar = {
@@ -180,7 +199,7 @@ export function generateCityData(seed: string): CityData {
   return {
     seed, plan, terrain,
     buildings: gen.buildings, kindCounts, cars, movingCars, trees: gen.trees,
-    roadPaths, alleyPaths, groundPolys: po.groundPolys, lotDecals: gen.lotDecals,
+    roadPaths, alleyPaths, parkPaths, ponds, groundPolys: po.groundPolys, lotDecals: gen.lotDecals,
   };
 }
 

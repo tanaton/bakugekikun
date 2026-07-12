@@ -11,7 +11,7 @@ export type TimeMode = 'day' | 'dusk';
 
 export interface GroundPalette {
   base: string; asphalt: string; sidewalk: string; block1: string; block2: string;
-  park: string; house: string; lane: string;
+  park: string; parkPath: string; house: string; lane: string;
   water: string; waterSurf: string; waterSpec: string; waterShine: number;
   waterSky: string; waterFoam: string;
   bank: string; mtn1: string; mtn2: string; crater: string;
@@ -31,7 +31,7 @@ export const TIMES: Record<TimeMode, TimePreset> = {
     hemiSky: 0xbdd5ee, hemiGnd: 0x8a8578, hemiInt: 1.05,
     sunCol: 0xfff1d6, sunInt: 1.35, sunPos: [-900, 2000, 700], emissive: 0.06,
     ground: { base: '#6e6f68', asphalt: '#54575d', sidewalk: '#83858a', block1: '#72747a', block2: '#7a7c7f',
-      park: '#385c3a', house: '#7f7c6d', lane: 'rgba(245,225,150,0.85)',
+      park: '#385c3a', parkPath: '#9b9276', house: '#7f7c6d', lane: 'rgba(245,225,150,0.85)',
       water: '#3d6d95', waterSurf: '#487fab', waterSpec: '#a8bccc', waterShine: 120,
       waterSky: '#9fc8ee', waterFoam: '#ffffff',
       bank: '#83816b', mtn1: '#46603c', mtn2: 'rgba(80,96,72,0)', crater: '#5b5142' },
@@ -41,7 +41,7 @@ export const TIMES: Record<TimeMode, TimePreset> = {
     hemiSky: 0x3a5480, hemiGnd: 0x241a12, hemiInt: 0.95,
     sunCol: 0xff9a5a, sunInt: 0.75, sunPos: [-1600, 700, 900], emissive: 0.85,
     ground: { base: '#1f211d', asphalt: '#191b20', sidewalk: '#33363c', block1: '#26282e', block2: '#2b2c31',
-      park: '#22392a', house: '#2a2822', lane: 'rgba(190,175,120,0.5)',
+      park: '#22392a', parkPath: '#37342a', house: '#2a2822', lane: 'rgba(190,175,120,0.5)',
       water: '#14222f', waterSurf: '#1b3044', waterSpec: '#ffb066', waterShine: 45,
       waterSky: '#2a3c58', waterFoam: '#8fa5bd',
       bank: '#26261e', mtn1: '#1a2a1a', mtn2: 'rgba(26,36,24,0)', crater: '#242019' },

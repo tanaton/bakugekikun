@@ -5,6 +5,7 @@ import { CITY_HALF } from './config';
 import { clamp, gridSample } from './math';
 import { genRoadLines, resamplePath } from './roads';
 import { blockPitch, housePitch, isHouseZone } from './lots';
+import { inPond, type Pond } from './ponds';
 import type { Rng } from './rng';
 import type { AlleyPath, GroundPoly, Lot, RoadPath, Vec2 } from './types';
 
@@ -16,13 +17,59 @@ export interface PlanOutput {
   roadPaths: RoadPath[];
   groundPolys: GroundPoly[];
   alleyPaths: AlleyPath[];
+  parkPaths: AlleyPath[];   // 公園の園路(路地と同じ形式。色だけ変えて描く)
+  ponds: Pond[];
   parkTreeJobs: ParkTreeJob[];
   pendingLots: Lot[];
 }
 
+// 園路と池を置く公園の最小辺長(m)。これ未満の公園は芝生と木だけ
+const PARK_DECOR_MIN = 100;
+const PARK_PATH_W = 3.5;
+
+// 大きな公園の装飾: 中心を通る十字の園路と、4象限のどれかに置く池。
+// 公園は矩形の局所座標(p0..p1, q0..q1)+ 世界座標への写像mapで扱い、
+// 碁盤目(warp)と放射環状の扇形(極座標)を同じコードで装飾する
+function decoratePark(out: PlanOutput, rng: Rng,
+    p0: number, p1: number, q0: number, q1: number,
+    map: (p: number, q: number) => Vec2): Pond | null {
+  const w = p1 - p0, d = q1 - q0;
+  if (Math.min(w, d) < PARK_DECOR_MIN) return null;
+  const pc = (p0 + p1) / 2, qc = (q0 + q1) / 2;
+  const pathP: Vec2[] = [], pathQ: Vec2[] = [];
+  for (let q = q0 + 4; q < q1 - 4; q += 24) pathP.push(map(pc, q));
+  pathP.push(map(pc, q1 - 4));
+  for (let p = p0 + 4; p < p1 - 4; p += 24) pathQ.push(map(p, qc));
+  pathQ.push(map(p1 - 4, qc));
+  out.parkPaths.push({ pts: pathP, w: PARK_PATH_W }, { pts: pathQ, w: PARK_PATH_W });
+  // 池: 岸帯(POND_BANK_INSET)込みで十字路にも公園の縁にもかからない半径に抑える
+  const r = (Math.min(w, d) / 4 - 9) * (0.75 + rng() * 0.25);
+  const c = map(pc + (rng() < 0.5 ? -1 : 1) * w / 4, qc + (rng() < 0.5 ? -1 : 1) * d / 4);
+  const pond: Pond = { x: c.x, z: c.z, r, wig: r * 0.35, ph: rng() * Math.PI * 2 };
+  out.ponds.push(pond);
+  return pond;
+}
+
+// 公園の植栽サンプラ: 園路の帯と池を避けて点を打つ(装飾なしの公園は一様サンプル)
+function parkSample(p0: number, p1: number, q0: number, q1: number,
+    map: (p: number, q: number) => Vec2, pond: Pond | null): (rng: Rng) => Vec2 {
+  const pc = (p0 + p1) / 2, qc = (q0 + q1) / 2, avoid = PARK_PATH_W / 2 + 2.5;
+  return rng => {
+    let pt = map(pc, qc);
+    for (let k = 0; k < 8; k++) {
+      const p = p0 + 8 + rng() * (p1 - p0 - 16), q = q0 + 8 + rng() * (q1 - q0 - 16);
+      pt = map(p, q);
+      if (pond && (Math.abs(p - pc) < avoid || Math.abs(q - qc) < avoid)) continue;
+      if (pond && inPond([pond], pt.x, pt.z, 3)) continue;
+      break;
+    }
+    return pt;
+  };
+}
+
 // ---------- 碁盤目 / 有機的(ワープした碁盤目) ----------
 export function genGridPlan(rng: Rng, organic: boolean, cityCore: Vec2, cityHouseTh: number): PlanOutput {
-  const out: PlanOutput = { roadPaths: [], groundPolys: [], alleyPaths: [], parkTreeJobs: [], pendingLots: [] };
+  const out: PlanOutput = { roadPaths: [], groundPolys: [], alleyPaths: [], parkPaths: [], ponds: [], parkTreeJobs: [], pendingLots: [] };
   // なめらかな変位場で格子全体を歪ませると、曲がった道路と不定形の街区になる
   const WN = 9;
   const wgx = new Float32Array(WN * WN), wgz = new Float32Array(WN * WN);
@@ -65,8 +112,10 @@ export function genGridPlan(rng: Rng, organic: boolean, cityCore: Vec2, cityHous
       for (let v = v1; v > v0; v -= step) poly.push(warp(u0, v));
       out.groundPolys.push({ pts: poly, kind: park ? 'park' : house ? 'house' : 'block', v: rng() < 0.5 });
       if (park) {
+        const mapUV = (u: number, v: number): Vec2 => warp(u, v);
+        const pond = decoratePark(out, rng, u0, u1, v0, v1, mapUV);
         out.parkTreeJobs.push({ n: clamp(Math.floor((u1 - u0) * (v1 - v0) / 110), 30, 220),
-          sample: r => warp(u0 + 8 + r() * (u1 - u0 - 16), v0 + 8 + r() * (v1 - v0 - 16)) });
+          sample: parkSample(u0, u1, v0, v1, mapUV, pond) });
         continue;
       }
       // ロット分割
@@ -96,7 +145,7 @@ export function genGridPlan(rng: Rng, organic: boolean, cityCore: Vec2, cityHous
 
 // ---------- 放射環状(環状道路 + 放射道路) ----------
 export function genRadialPlan(rng: Rng, cityCore: Vec2, cityHouseTh: number): PlanOutput {
-  const out: PlanOutput = { roadPaths: [], groundPolys: [], alleyPaths: [], parkTreeJobs: [], pendingLots: [] };
+  const out: PlanOutput = { roadPaths: [], groundPolys: [], alleyPaths: [], parkPaths: [], ponds: [], parkTreeJobs: [], pendingLots: [] };
   // 中心は都心位置に追従(街が地図からはみ出さない範囲で)
   const cx = clamp(cityCore.x, -450, 450);
   const cz = clamp(cityCore.z, -450, 450);
@@ -152,11 +201,33 @@ export function genRadialPlan(rng: Rng, cityCore: Vec2, cityHouseTh: number): Pl
     const raw = [polar(sp.a, rMin * 0.55), polar(sp.a, edgeDist(sp.a) - 20)];
     out.roadPaths.push({ pts: resamplePath(raw, false), w: sp.w, major: sp.major, loop: false });
   }
-  // 中央広場は公園
+  // 中央広場は公園。中心の池を環状園路が囲み、各スポークの起点まで放射園路を伸ばす
   out.groundPolys.push({ pts: arcPts(() => rMin - 12, 0, Math.PI * 2, 40, false), kind: 'park' });
+  const pondR = rMin * (0.16 + rng() * 0.08);
+  out.ponds.push({ x: cx, z: cz, r: pondR, wig: pondR * 0.3, ph: rng() * Math.PI * 2 });
+  const ringR = pondR + 7;
+  out.parkPaths.push({ pts: arcPts(() => ringR, 0, Math.PI * 2, 32), w: PARK_PATH_W });   // incl=trueで閉じる
+  for (const sp of spokes)
+    out.parkPaths.push({ pts: [polar(sp.a, ringR), polar(sp.a, rMin * 0.62)], w: PARK_PATH_W });
   out.parkTreeJobs.push({
     n: Math.min(260, Math.floor(Math.PI * (rMin - 25) * (rMin - 25) / 130)),
-    sample: r2 => polar(r2() * Math.PI * 2, Math.sqrt(r2()) * (rMin - 25)) });
+    sample: r2 => {
+      // 池・環状園路の内側と放射園路の帯を避けて植える(最大8回退避)
+      let pt: Vec2 = polar(0, ringR + 6);
+      for (let k = 0; k < 8; k++) {
+        const a = r2() * Math.PI * 2, rr = Math.sqrt(r2()) * (rMin - 25);
+        pt = polar(a, rr);
+        if (rr < ringR + 5) continue;
+        let onPath = false;
+        for (const sp of spokes) {
+          let da = Math.abs(a - sp.a) % (Math.PI * 2);
+          if (da > Math.PI) da = Math.PI * 2 - da;
+          if (da * rr < PARK_PATH_W / 2 + 2.5) { onPath = true; break; }
+        }
+        if (!onPath) break;
+      }
+      return pt;
+    } });
   // 街区: リング帯 × スポーク区間の扇形。最外帯は地図の縁まで埋める
   for (let ri = 0; ri < rings.length; ri++) {
     const outer = ri === rings.length - 1;
@@ -227,8 +298,12 @@ export function genRadialPlan(rng: Rng, cityCore: Vec2, cityHouseTh: number): Pl
       out.groundPolys.push({ pts: fanPoly(() => rOut, rIn, aA, aB, nA),
         kind: park ? 'park' : house ? 'house' : 'block', v: rng() < 0.5 });
       if (park) {
+        // 扇形を(弧長, 半径)の局所矩形とみなして碁盤目の公園と同じ装飾を通す
+        const arcLen = (aB - aA) * rm;
+        const mapFan = (p: number, q: number): Vec2 => polar(aA + p / rm, q);
+        const pond = decoratePark(out, rng, 0, arcLen, rIn, rOut, mapFan);
         out.parkTreeJobs.push({ n: clamp(Math.floor((rOut - rIn) * (aB - aA) * rm / 110), 30, 200),
-          sample: r2 => polar(aA + r2() * (aB - aA), rIn + 8 + r2() * (rOut - rIn - 16)) });
+          sample: parkSample(0, arcLen, rIn, rOut, mapFan, pond) });
         continue;
       }
       // ロット分割(半径方向 × 角度方向)

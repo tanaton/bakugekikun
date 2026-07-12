@@ -85,6 +85,13 @@ describe('generateCityData 不変条件', () => {
       check(t.color.r >= 0 && t.color.g >= 0 && t.color.b >= 0, () => '木の色が不正');
     }
 
+    // 池: 地図内・半径正・地形フィーチャ(山・水域)と重ならない
+    for (const p of city.ponds) {
+      check(inMap(p.x, p.z, MAP_HALF), () => `池が地図外 (${p.x}, ${p.z})`);
+      check(p.r > 0 && p.wig >= 0 && p.wig < p.r, () => `池の形状が不正 r=${p.r} wig=${p.wig}`);
+      check(!city.terrain.roadBlocked(p.x, p.z), () => `池が山・水域と重なる (${p.x}, ${p.z})`);
+    }
+
     // 街区ポリゴンが地図近傍に収まる(ワープや扇形で多少はみ出すのは許容)
     for (const gp of city.groundPolys) {
       check(gp.pts.length >= 3, () => '街区ポリゴンの点数が不足');

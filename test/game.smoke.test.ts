@@ -160,6 +160,10 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
     expect(world.view.ground.pushCrater(wx, wz, 50)).toBe(false);
     const landB = world.city.buildings[0];
     expect(world.view.ground.pushCrater(landB.x, landB.z, 50)).toBe(true);
+    // 公園の池も水面と同じ扱いで跡を残さない
+    expect(world.city.ponds.length).toBeGreaterThan(0);   // BAKUGEKI-01には池のある公園がある
+    const pond = world.city.ponds[0];
+    expect(world.view.ground.pushCrater(pond.x, pond.z, 50)).toBe(false);
 
     // 時間帯トグル
     applyTime(world, 'dusk');

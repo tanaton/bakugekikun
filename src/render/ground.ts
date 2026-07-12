@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import type { CityData } from '../core/cityGen';
 import { GROUND_SCALE, GROUND_TEX, GROUND_WORLD, MAP_HALF, worldToTex } from '../core/config';
+import { inPond, POND_BANK_INSET, pondPts } from '../core/ponds';
 import { mulberry32, type Rng } from '../core/rng';
 import { BANK_INSET, bandPt, shorePts } from '../core/terrain';
 import type { Building, Vec2 } from '../core/types';
@@ -120,7 +121,7 @@ export class GroundView {
   // 戻り値は「跡を描いたか」。falseなら呼び出し側は基礎の消失(destroyAround)も
   // 行わないこと(クレーターの見た目と基礎が消える範囲を常に一致させる)
   pushCrater(x: number, z: number, r: number): boolean {
-    if (this.city.terrain.inWater(x, z)) return false;
+    if (this.city.terrain.inWater(x, z) || inPond(this.city.ponds, x, z)) return false;
     const st = { kind: 'crater' as const, x, z, r, seed: (Math.random() * 2 ** 31) | 0 };
     this.pending.push(st);
     this.craters.push(st);
@@ -128,7 +129,7 @@ export class GroundView {
   }
 
   pushStamp(st: Stamp): void {
-    if (this.city.terrain.inWater(st.x, st.z)) return;
+    if (this.city.terrain.inWater(st.x, st.z) || inPond(this.city.ponds, st.x, st.z)) return;
     this.pending.push(st);
   }
 
@@ -306,6 +307,12 @@ export class GroundView {
       g.stroke();
     };
     for (const al of city.alleyPaths) strokeRoad(al.pts, false, al.w, G.asphalt);   // 街区内の路地
+    for (const pp of city.parkPaths) strokeRoad(pp.pts, false, pp.w, G.parkPath);   // 公園の園路
+    // 公園の池(テクスチャのみの水域)。岸の帯 → 水面の順に園路の上へ重ねる
+    for (const pd of city.ponds) {
+      trace(pondPts(pd, POND_BANK_INSET), true); g.fillStyle = G.bank; g.fill();
+      trace(pondPts(pd, 0), true); g.fillStyle = G.water; g.fill();
+    }
     // 地形フィーチャ(山の緑 / 湾・水辺)。道路より先に描く
     // 川は全フィーチャの岸を先に、全フィーチャの水を後にまとめて描く。
     // 川同士が重なるとき、後描きの岸の帯が先描きの水面を横切って残らないようにするため

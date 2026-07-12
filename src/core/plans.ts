@@ -104,23 +104,17 @@ function decoratePark(out: PlanOutput, rng: Rng,
     }
     out.ponds.push(...ponds);
   }
-  return { ponds, onPath: mkOnPath(pc, qc, offP, offQ, tnQ, tnP) };
-}
-
-// 園路帯の判定(蛇行の中心線からの垂直距離で近似。傾き≤0.55の誤差は余白が吸収)
-function mkOnPath(pc: number, qc: number,
-    offP: (tn: number) => number, offQ: (tn: number) => number,
-    tnQ: (q: number) => number, tnP: (p: number) => number): (p: number, q: number) => boolean {
+  // onPath = 園路帯の判定(蛇行の中心線からの垂直距離で近似。傾き≤0.55の誤差は余白が吸収)
   const avoid = PARK_PATH_W / 2 + 2.5;
-  return (p, q) => Math.abs(p - (pc + offP(tnQ(q)))) < avoid
-                || Math.abs(q - (qc + offQ(tnP(p)))) < avoid;
+  return { ponds, onPath: (p, q) => Math.abs(p - (pc + offP(tnQ(q)))) < avoid
+                                 || Math.abs(q - (qc + offQ(tnP(p)))) < avoid };
 }
 
 // 公園の植栽サンプラ: 園路の帯と池を避けて点を打つ(装飾なしの公園は一様サンプル)
 function parkSample(p0: number, p1: number, q0: number, q1: number,
     map: (p: number, q: number) => Vec2, decor: ParkDecor | null): (rng: Rng) => Vec2 {
   return rng => {
-    let pt = map((p0 + p1) / 2, (q0 + q1) / 2);
+    let pt!: Vec2;   // ループは必ず1回以上代入する
     for (let k = 0; k < 8; k++) {
       const p = p0 + 8 + rng() * (p1 - p0 - 16), q = q0 + 8 + rng() * (q1 - q0 - 16);
       pt = map(p, q);
@@ -177,10 +171,9 @@ export function genGridPlan(rng: Rng, organic: boolean, cityCore: Vec2, cityHous
       for (let v = v1; v > v0; v -= step) poly.push(warp(u0, v));
       out.groundPolys.push({ pts: poly, kind: park ? 'park' : house ? 'house' : 'block', v: rng() < 0.5 });
       if (park) {
-        const mapUV = (u: number, v: number): Vec2 => warp(u, v);
-        const decor = decoratePark(out, rng, u0, u1, v0, v1, mapUV);
+        const decor = decoratePark(out, rng, u0, u1, v0, v1, warp);
         out.parkTreeJobs.push({ n: clamp(Math.floor((u1 - u0) * (v1 - v0) / 110), 30, 220),
-          sample: parkSample(u0, u1, v0, v1, mapUV, decor) });
+          sample: parkSample(u0, u1, v0, v1, warp, decor) });
         continue;
       }
       // ロット分割
@@ -278,7 +271,7 @@ export function genRadialPlan(rng: Rng, cityCore: Vec2, cityHouseTh: number): Pl
     n: Math.min(260, Math.floor(Math.PI * (rMin - 25) * (rMin - 25) / 130)),
     sample: r2 => {
       // 池・環状園路の内側と放射園路の帯を避けて植える(最大8回退避)
-      let pt: Vec2 = polar(0, ringR + 6);
+      let pt!: Vec2;   // ループは必ず1回以上代入する
       for (let k = 0; k < 8; k++) {
         const a = r2() * Math.PI * 2, rr = Math.sqrt(r2()) * (rMin - 25);
         pt = polar(a, rr);

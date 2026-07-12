@@ -4,10 +4,11 @@
 // 低頻度で再描画して跡とマーカーを追従させる(2048→1024のdrawImageは1ms未満)
 
 import { GROUND_TEX, worldToTex } from '../core/config';
-import { $ } from './hud';
+import { $, isInputTarget } from './hud';
 
 export const MAP_CANVAS_SIZE = 1024;   // 実バッファのpx。表示サイズはCSS側(min(90vw,90vh))
 const REDRAW_MS = 200;
+const TICKS = [[1, 0], [-1, 0], [0, 1], [0, -1]];   // マーカー十字の四方
 
 // ワールド座標 → マップcanvas座標。地面テクスチャと同じ座標系(worldToTex)の縮尺なので
 // マーカーとテクスチャが必ず一致する(純関数。nodeテスト対象)
@@ -25,10 +26,10 @@ export function wireMap(deps: MapDeps): { close: () => void } {
   const overlay = $('mapOverlay');
   const canvas = $('mapCanvas') as HTMLCanvasElement;
   canvas.width = canvas.height = MAP_CANVAS_SIZE;
+  const g = canvas.getContext('2d')!;
   let timer = 0;   // 0でないとき=表示中(再描画インターバルのID)
 
   const draw = (): void => {
-    const g = canvas.getContext('2d')!;
     g.drawImage(deps.getGroundCanvas(), 0, 0, GROUND_TEX, GROUND_TEX,
       0, 0, MAP_CANVAS_SIZE, MAP_CANVAS_SIZE);
     // カメラ注視点のマーカー(円+四方の十字ティック)
@@ -37,7 +38,7 @@ export function wireMap(deps: MapDeps): { close: () => void } {
     g.lineWidth = 2.5;
     g.beginPath(); g.arc(px, py, 10, 0, Math.PI * 2); g.stroke();
     g.beginPath();
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    for (const [dx, dy] of TICKS) {
       g.moveTo(px + dx * 6, py + dy * 6);
       g.lineTo(px + dx * 17, py + dy * 17);
     }
@@ -61,7 +62,7 @@ export function wireMap(deps: MapDeps): { close: () => void } {
   $('mapBtn').addEventListener('click', toggle);
   overlay.addEventListener('click', close);   // オーバーレイのどこをタップしても閉じる
   addEventListener('keydown', e => {
-    if ((e.target as HTMLElement).tagName === 'INPUT') return;
+    if (isInputTarget(e)) return;
     if (e.code === 'KeyM') toggle();
     else if (e.code === 'Escape') close();
   });

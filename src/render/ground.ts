@@ -7,9 +7,9 @@
 // 跡が何千件溜まってもコストが一定(全スタンプの再生をしない)
 
 import * as THREE from 'three';
-import type { CityData } from '../core/cityGen';
+import { inAnyWater, type CityData } from '../core/cityGen';
 import { GROUND_SCALE, GROUND_TEX, GROUND_WORLD, MAP_HALF, worldToTex } from '../core/config';
-import { inPond, POND_BANK_INSET, pondPts } from '../core/ponds';
+import { POND_BANK_INSET, pondPts } from '../core/ponds';
 import { mulberry32, type Rng } from '../core/rng';
 import { BANK_INSET, bandPt, shorePts } from '../core/terrain';
 import type { Building, Vec2 } from '../core/types';
@@ -116,12 +116,18 @@ export class GroundView {
     this.mesh.receiveShadow = true;
   }
 
+  // 地面テクスチャの絵(2Dマップ表示用)。テクスチャのバッキングがcanvasであることは
+  // このクラスの実装詳細なので、外へはtex.imageでなくこのアクセサで渡す
+  get canvas(): HTMLCanvasElement {
+    return gCanvas!;
+  }
+
   // クレーターを登録する(scorch/nuke等の他の跡はpushStampでよい)。
   // 水面は跡が残らない、はスタンプ機構側のルール(呼び出し側は無条件に登録してよい)。
   // 戻り値は「跡を描いたか」。falseなら呼び出し側は基礎の消失(destroyAround)も
   // 行わないこと(クレーターの見た目と基礎が消える範囲を常に一致させる)
   pushCrater(x: number, z: number, r: number): boolean {
-    if (this.city.terrain.inWater(x, z) || inPond(this.city.ponds, x, z)) return false;
+    if (inAnyWater(this.city, x, z)) return false;
     const st = { kind: 'crater' as const, x, z, r, seed: (Math.random() * 2 ** 31) | 0 };
     this.pending.push(st);
     this.craters.push(st);
@@ -129,7 +135,7 @@ export class GroundView {
   }
 
   pushStamp(st: Stamp): void {
-    if (this.city.terrain.inWater(st.x, st.z) || inPond(this.city.ponds, st.x, st.z)) return;
+    if (inAnyWater(this.city, st.x, st.z)) return;
     this.pending.push(st);
   }
 

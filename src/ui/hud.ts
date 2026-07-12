@@ -7,6 +7,10 @@ import type { TimeMode } from '../render/sky';
 
 export const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
+// イベントの発生源がシード入力欄か(ゲーム操作のキー・右クリックと区別する共通ガード)
+export const isInputTarget = (e: Event): boolean =>
+  (e.target as HTMLElement).tagName === 'INPUT';
+
 function yen(v: number): string {
   if (v >= 1e12) return '¥' + (v / 1e12).toFixed(2) + '兆';
   if (v >= 1e8) return '¥' + (v / 1e8).toFixed(1) + '億';

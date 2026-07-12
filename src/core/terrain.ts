@@ -1,7 +1,7 @@
 // 地形: シード付き値ノイズの高さ場 + 四隅/四辺の地形フィーチャ(山・水域)
 
 import { CITY_HALF, MAP_HALF, WATER_BED_Y } from './config';
-import { clamp, gridSample, lerp, lotToWorld } from './math';
+import { clamp, gridSample, lerp, lotToWorld, shoreWigAt } from './math';
 import type { Rng } from './rng';
 import type { Vec2 } from './types';
 
@@ -28,7 +28,7 @@ export function bandPt(f: BandFeat, t: number, du: number): Vec2 {
 const bandWig = (f: Extract<WaterFeat, { kind: 'band' }>, t: number): number =>
   f.wig * (0.5 + 0.5 * Math.sin(t / 380 + f.ph));
 const discWig = (f: Extract<WaterFeat, { kind: 'disc' }>, a: number): number =>
-  f.wig * (0.5 + 0.5 * Math.sin(a * 3 + f.ph));
+  shoreWigAt(f.wig, f.ph, a);
 
 // 岸帯(陸側の砂色の帯)の張り出し幅(m)。shorePtsのinsetとして2D地面描画が使う
 export const BANK_INSET = 14;

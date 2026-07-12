@@ -37,9 +37,9 @@ $('hint').textContent = isTouch
   : '右クリックで爆撃地点を指定せよ';
 
 // --- UI配線 ---
-// 地面テクスチャのcanvasは再生成でview(とtex)ごと差し替わるためgetterで渡す
+// viewは再生成で差し替わるため、地面テクスチャのcanvasはgetterで毎回取り直す
 const map = wireMap({
-  getGroundCanvas: () => world.view.ground.tex.image as HTMLCanvasElement,
+  getGroundCanvas: () => world.view.ground.canvas,
   cam: input.cam,
 });
 function regen(seed: string): void {

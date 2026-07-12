@@ -3,7 +3,7 @@
 // 表示OFF中は即returnするので計測オーバーヘッドはほぼゼロ。
 
 import type * as THREE from 'three';
-import { $ } from './hud';
+import { $, isInputTarget } from './hud';
 
 let profOn = false;
 const profSum = new Map<string, number>();
@@ -46,7 +46,7 @@ function toggleProfiler(): void {
 
 export function wireProfiler(): void {
   addEventListener('keydown', e => {
-    if (e.code !== 'KeyP' || (e.target as HTMLElement).tagName === 'INPUT') return;
+    if (e.code !== 'KeyP' || isInputTarget(e)) return;
     toggleProfiler();
   });
   // スマホにはPキーがないので、fps表示のタップでも切り替えられるようにする

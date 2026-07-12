@@ -10,7 +10,7 @@ import { addBuildingLot, BUILDING_KINDS, pushTree, type GenCity } from './lots';
 import { lotToWorld } from './math';
 import { bakeRoadHeights, carPose, cullMountainAlleys, cullMountainRoads, laneOffset, RoadMask } from './roads';
 import { genGridPlan, genRadialPlan } from './plans';
-import { pondMaxR, type Pond } from './ponds';
+import { inPond, pondMaxR, type Pond } from './ponds';
 import { pick, rngFor } from './rng';
 import { SpatialHash } from './spatialHash';
 import { bandPt, generateFeatures, Terrain } from './terrain';
@@ -37,6 +37,11 @@ export interface CityData {
 }
 
 const CAR_COLORS = [0xd0d3d8, 0x30343c, 0xa33a2e, 0x3a5d8f, 0xc2b26a, 0x777d88];
+
+// 水面(湾・川・公園の池)の中か。「水面には跡も演出も残さない」判定の一元窓口
+// (爆撃跡の焼き込み・誘爆などの呼び出し側が判定の組を覚えなくて済むように)
+export const inAnyWater = (city: Pick<CityData, 'terrain' | 'ponds'>, x: number, z: number): boolean =>
+  city.terrain.inWater(x, z) || inPond(city.ponds, x, z);
 
 export function generateCityData(seed: string): CityData {
   // --- 地形フィーチャと起伏 ---
@@ -83,9 +88,7 @@ export function generateCityData(seed: string): CityData {
   }
   for (let i = 0; i < N_CARS; i++) {
     const rw = carsRng() * roadTotalW;
-    let lo = 0, hi = roadCum.length - 1;
-    while (lo < hi) { const mid = (lo + hi) >> 1; if (roadCum[mid] <= rw) lo = mid + 1; else hi = mid; }
-    const ri = lo;
+    const ri = roadCum.findIndex(c => c > rw);   // rw < 総重量なので必ず見つかる
     const rp = roadPaths[ri];
     const dir: 1 | -1 = carsRng() < 0.5 ? 1 : -1;
     const c: MovingCar = {

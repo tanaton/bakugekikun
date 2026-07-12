@@ -13,6 +13,11 @@ export function lotToWorld(cx: number, cz: number, rot: number, lx: number, lz: 
 
 export const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
+// 円形水域の岸線の揺らぎ(角度→張り出し量)。湾・川(terrain)と公園の池(ponds)が
+// 同じ形の定義を共有する(片方だけ調整すると水辺の見た目が食い違うため)
+export const shoreWigAt = (wig: number, ph: number, a: number): number =>
+  wig * (0.5 + 0.5 * Math.sin(a * 3 + ph));
+
 export const euclideanModulo = (n: number, m: number): number => ((n % m) + m) % m;
 
 // smoothstep補間付きバイリニア格子サンプラ(地形グリッドと街路ワープ場で共用)

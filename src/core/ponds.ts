@@ -1,6 +1,7 @@
 // 公園の池。地形の水域フィーチャ(terrain)とは独立した、テクスチャ描画のみの小さな水域。
 // 揺らぐ岸線の定義をここに集約し、2D地面描画と内外判定(爆撃跡の抑制・植栽除け)で共用する
 
+import { shoreWigAt } from './math';
 import type { Vec2 } from './types';
 
 // e/rotは細長い池の伸長率と長軸の向き(省略時は丸池)。
@@ -10,9 +11,9 @@ export interface Pond { x: number; z: number; r: number; wig: number; ph: number
 // 池の岸帯(陸側の砂色の帯)の張り出し幅(m)。湾のBANK_INSETより小さい(池は半径が小さい)
 export const POND_BANK_INSET = 5;
 
-// 角度aにおける岸線の半径(terrainのdiscWigと同じ揺らぎ × 楕円の伸長)
+// 角度aにおける岸線の半径(湾・川と共通の揺らぎ × 楕円の伸長)
 export const pondEdgeR = (p: Pond, a: number): number =>
-  (p.r - p.wig * (0.5 + 0.5 * Math.sin(a * 3 + p.ph)))
+  (p.r - shoreWigAt(p.wig, p.ph, a))
   * (1 + (p.e ?? 0) * Math.cos(2 * (a - (p.rot ?? 0))));
 
 // 岸線半径の上界(内外判定の早期棄却・地形フィーチャとの重なり判定用)

@@ -6,6 +6,7 @@ import type { Terrain } from '../core/terrain';
 import type { SunShadow } from '../render/sky';
 import { initAudio } from './audio';
 import { createGestureTracker } from './gestures';
+import { isInputTarget } from './hud';
 
 export interface CamState {
   focus: THREE.Vector3;
@@ -26,7 +27,7 @@ export function createInput(canvas: HTMLCanvasElement,
   const keys: Record<string, boolean> = {};
   const move = { x: 0, y: 0 };
   addEventListener('keydown', e => {
-    if ((e.target as HTMLElement).tagName !== 'INPUT') keys[e.code] = true;
+    if (!isInputTarget(e)) keys[e.code] = true;
   });
   addEventListener('keyup', e => { keys[e.code] = false; });
   // フォーカスを失うとkeyupが届かず押しっぱなしになるため、全キーを解除する
@@ -88,7 +89,7 @@ export function createInput(canvas: HTMLCanvasElement,
   // canvas限定だと、マップオーバーレイやHUDパネル上の右クリックでメニューが開き、
   // 押していた移動キーのkeyupがページに届かず移動しっぱなしになる(メニューはblurも発火させない)
   addEventListener('contextmenu', e => {
-    if ((e.target as HTMLElement).tagName === 'INPUT') {
+    if (isInputTarget(e)) {
       for (const k in keys) keys[k] = false;   // メニュー表示中に失われるkeyupの代わり
     } else {
       e.preventDefault();

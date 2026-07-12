@@ -18,6 +18,21 @@ export const pondEdgeR = (p: Pond, a: number): number =>
 
 // 岸線半径の上界(内外判定の早期棄却・地形フィーチャとの重なり判定用)
 export const pondMaxR = (p: Pond): number => p.r * (1 + (p.e ?? 0));
+// 岸線半径の下界(揺らぎと楕円の最小側。「完全に水面内」の保守的判定用)
+export const pondMinR = (p: Pond): number => (p.r - p.wig) * (1 - (p.e ?? 0));
+
+// 円(中心x,z・半径r)がいずれかの池の水面に完全に収まるか。
+// 爆撃跡の抑制に使う: 池に収まる小さな爆発は水が呑み込み跡を残さないが、
+// 池からはみ出す爆発(核など)は池ごと焼き払うので跡を描く
+export function pondSwallows(ponds: readonly Pond[], x: number, z: number, r: number): boolean {
+  for (const p of ponds) {
+    const lim = pondMinR(p) - r;
+    if (lim < 0) continue;
+    const dx = x - p.x, dz = z - p.z;
+    if (dx * dx + dz * dz <= lim * lim) return true;
+  }
+  return false;
+}
 
 // 揺らぐ岸線の点列(insetは陸側への張り出し量。岸帯は+POND_BANK_INSET、水面は0)
 export function pondPts(p: Pond, inset: number): Vec2[] {

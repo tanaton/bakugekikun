@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { inAnyWater, type CityData } from '../core/cityGen';
 import { GROUND_SCALE, GROUND_TEX, GROUND_WORLD, MAP_HALF, worldToTex } from '../core/config';
-import { POND_BANK_INSET, pondPts } from '../core/ponds';
+import { POND_BANK_INSET, pondMaxR, pondPts } from '../core/ponds';
 import { mulberry32, type Rng } from '../core/rng';
 import { BANK_INSET, bandPt, shorePts } from '../core/terrain';
 import type { Building, Vec2 } from '../core/types';
@@ -127,7 +127,14 @@ export class GroundView {
   // 戻り値は「跡を描いたか」。falseなら呼び出し側は基礎の消失(destroyAround)も
   // 行わないこと(クレーターの見た目と基礎が消える範囲を常に一致させる)
   pushCrater(x: number, z: number, r: number): boolean {
-    if (inAnyWater(this.city, x, z)) return false;
+    if (inAnyWater(this.city, x, z, r)) return false;
+    // クレーターに完全に覆われた池は消滅する(以後この場所は普通の地面として跡が残り、
+    // 時間帯の塗り直しでも描かれない)。blobの半径揺らぎの最小0.88倍で保守的に判定
+    const ponds = this.city.ponds;
+    for (let i = ponds.length - 1; i >= 0; i--) {
+      const p = ponds[i];
+      if (Math.hypot(p.x - x, p.z - z) + pondMaxR(p) <= r * 0.88) ponds.splice(i, 1);
+    }
     const st = { kind: 'crater' as const, x, z, r, seed: (Math.random() * 2 ** 31) | 0 };
     this.pending.push(st);
     this.craters.push(st);
@@ -135,7 +142,8 @@ export class GroundView {
   }
 
   pushStamp(st: Stamp): void {
-    if (inAnyWater(this.city, st.x, st.z)) return;
+    const r = st.kind === 'lot' ? Math.hypot(st.sx, st.sz) / 2 : st.r;
+    if (inAnyWater(this.city, st.x, st.z, r)) return;
     this.pending.push(st);
   }
 

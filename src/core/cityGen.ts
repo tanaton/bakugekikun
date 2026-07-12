@@ -10,7 +10,7 @@ import { addBuildingLot, BUILDING_KINDS, pushTree, type GenCity } from './lots';
 import { lotToWorld } from './math';
 import { bakeRoadHeights, carPose, cullMountainAlleys, cullMountainRoads, laneOffset, RoadMask } from './roads';
 import { genGridPlan, genRadialPlan } from './plans';
-import { inPond, pondMaxR, type Pond } from './ponds';
+import { pondMaxR, pondSwallows, type Pond } from './ponds';
 import { pick, rngFor } from './rng';
 import { SpatialHash } from './spatialHash';
 import { bandPt, generateFeatures, Terrain } from './terrain';
@@ -38,10 +38,13 @@ export interface CityData {
 
 const CAR_COLORS = [0xd0d3d8, 0x30343c, 0xa33a2e, 0x3a5d8f, 0xc2b26a, 0x777d88];
 
-// 水面(湾・川・公園の池)の中か。「水面には跡も演出も残さない」判定の一元窓口
-// (爆撃跡の焼き込み・誘爆などの呼び出し側が判定の組を覚えなくて済むように)
-export const inAnyWater = (city: Pick<CityData, 'terrain' | 'ponds'>, x: number, z: number): boolean =>
-  city.terrain.inWater(x, z) || inPond(city.ponds, x, z);
+// 水面(湾・川・公園の池)が半径rの爆発・跡を呑み込むか。「水面には跡も演出も残さない」
+// 判定の一元窓口(爆撃跡の焼き込み・誘爆などの呼び出し側が判定の組を覚えなくて済むように)。
+// 湾・川は中心が水面ならすべて呑む(広大なので)が、池は爆発が丸ごと収まるときだけ呑む
+// (数十mの池が核の爆心跡を消さないように。はみ出す爆発は池ごと焼き払われ、跡が描かれる)
+export const inAnyWater = (city: Pick<CityData, 'terrain' | 'ponds'>,
+    x: number, z: number, r = 0): boolean =>
+  city.terrain.inWater(x, z) || pondSwallows(city.ponds, x, z, r);
 
 export function generateCityData(seed: string): CityData {
   // --- 地形フィーチャと起伏 ---

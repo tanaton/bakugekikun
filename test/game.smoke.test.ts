@@ -160,10 +160,14 @@ describe('ゲーム統合スモーク(nodeスタブ)', () => {
     expect(world.view.ground.pushCrater(wx, wz, 50)).toBe(false);
     const landB = world.city.buildings[0];
     expect(world.view.ground.pushCrater(landB.x, landB.z, 50)).toBe(true);
-    // 公園の池も水面と同じ扱いで跡を残さない
+    // 公園の池: 池に収まる小さな爆発は水が呑み込み跡を残さない。
+    // 池からはみ出す爆発は池ごと焼き払って跡を描き、完全に覆われた池は消滅する
     expect(world.city.ponds.length).toBeGreaterThan(0);   // BAKUGEKI-01には池のある公園がある
-    const pond = world.city.ponds[0];
-    expect(world.view.ground.pushCrater(pond.x, pond.z, 50)).toBe(false);
+    const pond = world.city.ponds.reduce((a, b) => (a.r > b.r ? a : b));
+    expect(world.view.ground.pushCrater(pond.x, pond.z, 1)).toBe(false);    // 水面に呑まれる
+    expect(world.view.ground.pushCrater(pond.x, pond.z, 300)).toBe(true);   // 池ごと焼き払う
+    expect(world.city.ponds).not.toContain(pond);                           // 池は消滅
+    expect(world.view.ground.pushCrater(pond.x, pond.z, 1)).toBe(true);     // 以後は普通の地面
 
     // 時間帯トグル
     applyTime(world, 'dusk');

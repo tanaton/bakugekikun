@@ -308,11 +308,12 @@ export class GroundView {
     };
     for (const al of city.alleyPaths) strokeRoad(al.pts, false, al.w, G.asphalt);   // 街区内の路地
     for (const pp of city.parkPaths) strokeRoad(pp.pts, false, pp.w, G.parkPath);   // 公園の園路
-    // 公園の池(テクスチャのみの水域)。岸の帯 → 水面の順に園路の上へ重ねる
-    for (const pd of city.ponds) {
-      trace(pondPts(pd, POND_BANK_INSET), true); g.fillStyle = G.bank; g.fill();
-      trace(pondPts(pd, 0), true); g.fillStyle = G.water; g.fill();
-    }
+    // 公園の池(テクスチャのみの水域)。全池の岸の帯 → 全池の水面の順に園路の上へ重ねる
+    // (ひょうたん池は2つのPondが重なるため、後描きの岸が先描きの水面を横切らないように)
+    g.fillStyle = G.bank;
+    for (const pd of city.ponds) { trace(pondPts(pd, POND_BANK_INSET), true); g.fill(); }
+    g.fillStyle = G.water;
+    for (const pd of city.ponds) { trace(pondPts(pd, 0), true); g.fill(); }
     // 地形フィーチャ(山の緑 / 湾・水辺)。道路より先に描く
     // 川は全フィーチャの岸を先に、全フィーチャの水を後にまとめて描く。
     // 川同士が重なるとき、後描きの岸の帯が先描きの水面を横切って残らないようにするため

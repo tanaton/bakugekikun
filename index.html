@@ -28,7 +28,10 @@
       <button id="timeBtn" style="flex:1" title="昼と夕暮れを切り替え"></button>
       <button id="qualityBtn" title="描画負荷(影・解像度・粒子密度)を切り替え"></button>
     </div>
-    <div class="seedrow"><button id="weaponBtn" style="flex:1" title="発射する弾種を切り替え"></button></div>
+    <div class="seedrow">
+      <button id="weaponBtn" style="flex:1" title="発射する弾種を切り替え"></button>
+      <button id="mapBtn" title="都市マップを表示"></button>
+    </div>
     <div class="cmdExtra">
       <div class="label" id="planName" style="margin-top:8px">都市プラン: —</div>
       <div class="label" id="perf" style="margin-top:4px">— fps</div>
@@ -53,11 +56,13 @@
     <div><span class="key">ホイール</span><b>ズーム</b></div>
     <div><span class="key">右クリック</span><b style="color:var(--red)">爆撃指定</b></div>
     <div><span class="key">P</span><b>処理時間計測</b></div>
+    <div><span class="key">M</span><b>地図</b></div>
   </div>
 
   <div class="panel" id="soundWrap"><button id="soundBtn"></button></div>
   <div id="stick"><div id="stickKnob"></div></div>
   <div id="hint"><!-- 文言はmain.tsがタッチ/マウスで出し分ける --></div>
+  <div id="mapOverlay"><canvas id="mapCanvas"></canvas></div>
   <div id="nukeFlash"></div>
 </div>
 <script type="module" src="/src/main.ts"></script>

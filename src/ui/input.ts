@@ -84,9 +84,16 @@ export function createInput(canvas: HTMLCanvasElement,
     e.preventDefault();
     zoomBy(Math.exp(e.deltaY * 0.0011));
   }, { passive: false });
-  // 右クリック=爆撃指定はcanvas上だけの約束。windowに付けるとシード入力欄でも
-  // コンテキストメニュー(貼り付け等)が出なくなる
-  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  // コンテキストメニューは全画面で抑止する(シード入力欄だけ貼り付け等のため例外)。
+  // canvas限定だと、マップオーバーレイやHUDパネル上の右クリックでメニューが開き、
+  // 押していた移動キーのkeyupがページに届かず移動しっぱなしになる(メニューはblurも発火させない)
+  addEventListener('contextmenu', e => {
+    if ((e.target as HTMLElement).tagName === 'INPUT') {
+      for (const k in keys) keys[k] = false;   // メニュー表示中に失われるkeyupの代わり
+    } else {
+      e.preventDefault();
+    }
+  });
 
   return { cam, keys, move };
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generateCityData } from '../src/core/cityGen';
 import { inMap, MAP_HALF, PLACE_LOT, PLACE_FOREST, ROAD_STEP } from '../src/core/config';
+import { inPond } from '../src/core/ponds';
 import { B } from '../src/core/types';
 
 // ランダム風のシード20個で全件検査するプロパティテスト。
@@ -89,7 +90,15 @@ describe('generateCityData 不変条件', () => {
     for (const p of city.ponds) {
       check(inMap(p.x, p.z, MAP_HALF), () => `池が地図外 (${p.x}, ${p.z})`);
       check(p.r > 0 && p.wig >= 0 && p.wig < p.r, () => `池の形状が不正 r=${p.r} wig=${p.wig}`);
+      check((p.e ?? 0) >= 0 && (p.e ?? 0) < 0.5, () => `池の伸長率が不正 e=${p.e}`);
       check(!city.terrain.roadBlocked(p.x, p.z), () => `池が山・水域と重なる (${p.x}, ${p.z})`);
+    }
+    // 園路が池に入らない(池は園路から一番離れた象限に置かれる)。
+    // padは2まで: 中央広場の環状園路は池中心から7mと近い(岸帯5m+余裕2m)
+    for (const pp of city.parkPaths) {
+      for (const pt of pp.pts) {
+        check(!inPond(city.ponds, pt.x, pt.z, 2), () => `園路が池に入る (${pt.x}, ${pt.z})`);
+      }
     }
 
     // 街区ポリゴンが地図近傍に収まる(ワープや扇形で多少はみ出すのは許容)

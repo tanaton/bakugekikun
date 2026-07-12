@@ -73,6 +73,13 @@ button:focus-visible{ outline:1px solid var(--amber); outline-offset:1px; }
 @keyframes pulse{ 0%,100%{opacity:.95} 50%{opacity:.45} }
 @media (prefers-reduced-motion: reduce){ #hint{ animation:none; } }
 #hint.gone{ display:none; }
+/* ---- 2D都市マップ(Mキー/地図ボタンで開閉。タップで閉じる) ---- */
+#mapOverlay{
+  position:fixed; inset:0; z-index:4; display:none; align-items:center; justify-content:center;
+  background:rgba(9,13,17,.72); pointer-events:auto;
+}
+#mapOverlay.open{ display:flex; }
+#mapCanvas{ width:min(90vw,90vh); height:min(90vw,90vh); border:1px solid var(--line); }
 /* ---- 核爆発の全画面閃光 ---- */
 #nukeFlash{
   position:fixed; inset:0; background:#fff6e4; opacity:0;

@@ -10,7 +10,7 @@ import { addBuildingLot, BUILDING_KINDS, pushTree, type GenCity } from './lots';
 import { lotToWorld } from './math';
 import { bakeRoadHeights, carPose, cullMountainAlleys, cullMountainRoads, laneOffset, RoadMask } from './roads';
 import { genGridPlan, genRadialPlan } from './plans';
-import type { Pond } from './ponds';
+import { pondMaxR, type Pond } from './ponds';
 import { pick, rngFor } from './rng';
 import { SpatialHash } from './spatialHash';
 import { bandPt, generateFeatures, Terrain } from './terrain';
@@ -54,9 +54,11 @@ export function generateCityData(seed: string): CityData {
   const alleyPaths = cullMountainAlleys(po.alleyPaths, terrain);
   const parkPaths = cullMountainAlleys(po.parkPaths, terrain);
   // 地形フィーチャ(山・湾)は公園ポリゴンの上に描かれるため、重なった池は作らない
-  const ponds = po.ponds.filter(pd =>
-    ![[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].some(([ox, oz]) =>
-      terrain.roadBlocked(pd.x + ox * pd.r, pd.z + oz * pd.r)));
+  const ponds = po.ponds.filter(pd => {
+    const rm = pondMaxR(pd);
+    return ![[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].some(([ox, oz]) =>
+      terrain.roadBlocked(pd.x + ox * rm, pd.z + oz * rm));
+  });
 
   // --- 建物・民家(プラン生成が出したロットから) ---
   const gen: GenCity = { terrain, cityHouseTh: features.cityHouseTh,

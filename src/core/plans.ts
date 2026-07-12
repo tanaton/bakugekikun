@@ -27,40 +27,105 @@ export interface PlanOutput {
 const PARK_DECOR_MIN = 100;
 const PARK_PATH_W = 3.5;
 
-// 大きな公園の装飾: 中心を通る十字の園路と、4象限のどれかに置く池。
+// 遊歩道の蛇行オフセット。2つの正弦波の重ねで公園ごと・園路ごとに違う曲がり方になる。
+// 振幅は傾き予算S(横ずれ/道のり)から決めるので、公園の大きさによらず曲がりの
+// きつさが一定で、木の回避判定の誤差(垂直距離≒最短距離)も一定に収まる。
+// rngは必ず5回消費する(分岐で消費数が変わると'plan'ストリーム全体がずれる)
+export function meanderOffset(rng: Rng, len: number, ampCap: number): (tn: number) => number {
+  const k1 = 1 + rng() * 0.75, k2 = 2.5 + rng();          // 周期数(ゆったり + 細かめ)
+  const ph1 = rng() * Math.PI * 2, ph2 = rng() * Math.PI * 2;
+  const u = 0.65 + rng() * 0.2;                           // 低周波成分の配分
+  const S = 0.55;                                         // 傾き予算(最大横ずれ勾配)
+  let a1 = u * S * len / (2 * Math.PI * k1), a2 = (1 - u) * S * len / (2 * Math.PI * k2);
+  if (a1 + a2 > ampCap) { const s = ampCap / (a1 + a2); a1 *= s; a2 *= s; }
+  // 端では0に収束(園路が公園の縁の中央に届く)
+  const env = (t: number): number => Math.min(1, t / 0.15, (1 - t) / 0.15);
+  return tn => env(tn) * (a1 * Math.sin(2 * Math.PI * k1 * tn + ph1)
+                        + a2 * Math.sin(2 * Math.PI * k2 * tn + ph2));
+}
+
+// 公園装飾の結果。onPathは局所座標での園路帯の判定(植栽の回避用)。
+// pondsは0〜2件(ひょうたん池は重なる2つのPondで表す)
+interface ParkDecor { ponds: Pond[]; onPath: (p: number, q: number) => boolean }
+
+// 大きな公園の装飾: 中心を通る2本の蛇行遊歩道と、園路から一番離れた象限に置く池。
 // 公園は矩形の局所座標(p0..p1, q0..q1)+ 世界座標への写像mapで扱い、
 // 碁盤目(warp)と放射環状の扇形(極座標)を同じコードで装飾する
 function decoratePark(out: PlanOutput, rng: Rng,
     p0: number, p1: number, q0: number, q1: number,
-    map: (p: number, q: number) => Vec2): Pond | null {
+    map: (p: number, q: number) => Vec2): ParkDecor | null {
   const w = p1 - p0, d = q1 - q0;
   if (Math.min(w, d) < PARK_DECOR_MIN) return null;
   const pc = (p0 + p1) / 2, qc = (q0 + q1) / 2;
+  // 蛇行は公園の縁からは8mのクリアランスだけ確保する(池は後から空きに合わせる)
+  const offP = meanderOffset(rng, d, w / 2 - 8);   // q方向に走る道のp方向オフセット
+  const offQ = meanderOffset(rng, w, d / 2 - 8);
+  const tnQ = (q: number): number => (q - q0 - 4) / (d - 8);
+  const tnP = (p: number): number => (p - p0 - 4) / (w - 8);
   const pathP: Vec2[] = [], pathQ: Vec2[] = [];
-  for (let q = q0 + 4; q < q1 - 4; q += 24) pathP.push(map(pc, q));
+  for (let q = q0 + 4; q < q1 - 4; q += 12) pathP.push(map(pc + offP(tnQ(q)), q));
   pathP.push(map(pc, q1 - 4));
-  for (let p = p0 + 4; p < p1 - 4; p += 24) pathQ.push(map(p, qc));
+  for (let p = p0 + 4; p < p1 - 4; p += 12) pathQ.push(map(p, qc + offQ(tnP(p))));
   pathQ.push(map(p1 - 4, qc));
   out.parkPaths.push({ pts: pathP, w: PARK_PATH_W }, { pts: pathQ, w: PARK_PATH_W });
-  // 池: 岸帯(POND_BANK_INSET)込みで十字路にも公園の縁にもかからない半径に抑える
-  const r = (Math.min(w, d) / 4 - 9) * (0.75 + rng() * 0.25);
-  const c = map(pc + (rng() < 0.5 ? -1 : 1) * w / 4, qc + (rng() < 0.5 ? -1 : 1) * d / 4);
-  const pond: Pond = { x: c.x, z: c.z, r, wig: r * 0.35, ph: rng() * Math.PI * 2 };
-  out.ponds.push(pond);
-  return pond;
+  // 池: 4象限の中心のうち両園路から一番離れた場所に、実際の空きに収まる半径で置く。
+  // 距離は写像後のワールド空間で測る(扇形は局所距離が歪むため)
+  let best: Vec2 = map(pc, qc), bestD = -Infinity;
+  for (const sp of [-1, 1]) for (const sq of [-1, 1]) {
+    const c = map(pc + sp * w / 4, qc + sq * d / 4);
+    let D = Infinity;
+    for (const pt of pathP) D = Math.min(D, Math.hypot(pt.x - c.x, pt.z - c.z));
+    for (const pt of pathQ) D = Math.min(D, Math.hypot(pt.x - c.x, pt.z - c.z));
+    if (D > bestD) { bestD = D; best = c; }
+  }
+  // 収まる最大半径。マージン9 = 岸帯5 + 園路半幅1.75 + 余裕
+  const fit = Math.min(bestD - 9, Math.min(w, d) / 4 - 7);
+  // 形と大きさのパターン(丸 / 細長 / ひょうたん)。どのパターンでも最遠の岸がfitに収まる。
+  // rngは池なしでも必ず5回消費する(分岐で消費数が変わると'plan'ストリーム全体がずれる)
+  const shape = rng(), size = rng(), extra = rng();
+  const rot = rng() * Math.PI, ph = rng() * Math.PI * 2;
+  const ponds: Pond[] = [];
+  if (fit >= 9) {
+    if (shape < 0.4) {           // 丸池(大きさのばらつきを広めに)
+      const r = fit * (0.55 + 0.4 * size);
+      ponds.push({ x: best.x, z: best.z, r, wig: r * (0.25 + 0.2 * extra), ph });
+    } else if (shape < 0.75) {   // 細長い池(向きはシード次第)
+      const e = 0.22 + 0.18 * extra;
+      const r = fit * (0.6 + 0.35 * size) / (1 + e);
+      ponds.push({ x: best.x, z: best.z, r, wig: r * 0.28, ph, e, rot });
+    } else {                     // ひょうたん池(大小2つの重なる池。合併して一続きの水面になる)
+      const base = fit * (0.55 + 0.3 * size);
+      const r1 = base * 0.62, r2 = base * 0.46;
+      const gap = (r1 + r2) * 0.78;
+      const dx = Math.cos(rot), dz = Math.sin(rot);
+      ponds.push(
+        { x: best.x - dx * gap / 2, z: best.z - dz * gap / 2, r: r1, wig: r1 * 0.3, ph },
+        { x: best.x + dx * gap / 2, z: best.z + dz * gap / 2, r: r2, wig: r2 * 0.3, ph: ph + 2.1 });
+    }
+    out.ponds.push(...ponds);
+  }
+  return { ponds, onPath: mkOnPath(pc, qc, offP, offQ, tnQ, tnP) };
+}
+
+// 園路帯の判定(蛇行の中心線からの垂直距離で近似。傾き≤0.55の誤差は余白が吸収)
+function mkOnPath(pc: number, qc: number,
+    offP: (tn: number) => number, offQ: (tn: number) => number,
+    tnQ: (q: number) => number, tnP: (p: number) => number): (p: number, q: number) => boolean {
+  const avoid = PARK_PATH_W / 2 + 2.5;
+  return (p, q) => Math.abs(p - (pc + offP(tnQ(q)))) < avoid
+                || Math.abs(q - (qc + offQ(tnP(p)))) < avoid;
 }
 
 // 公園の植栽サンプラ: 園路の帯と池を避けて点を打つ(装飾なしの公園は一様サンプル)
 function parkSample(p0: number, p1: number, q0: number, q1: number,
-    map: (p: number, q: number) => Vec2, pond: Pond | null): (rng: Rng) => Vec2 {
-  const pc = (p0 + p1) / 2, qc = (q0 + q1) / 2, avoid = PARK_PATH_W / 2 + 2.5;
+    map: (p: number, q: number) => Vec2, decor: ParkDecor | null): (rng: Rng) => Vec2 {
   return rng => {
-    let pt = map(pc, qc);
+    let pt = map((p0 + p1) / 2, (q0 + q1) / 2);
     for (let k = 0; k < 8; k++) {
       const p = p0 + 8 + rng() * (p1 - p0 - 16), q = q0 + 8 + rng() * (q1 - q0 - 16);
       pt = map(p, q);
-      if (pond && (Math.abs(p - pc) < avoid || Math.abs(q - qc) < avoid)) continue;
-      if (pond && inPond([pond], pt.x, pt.z, 3)) continue;
+      if (decor?.onPath(p, q)) continue;
+      if (decor && inPond(decor.ponds, pt.x, pt.z, 3)) continue;
       break;
     }
     return pt;
@@ -113,9 +178,9 @@ export function genGridPlan(rng: Rng, organic: boolean, cityCore: Vec2, cityHous
       out.groundPolys.push({ pts: poly, kind: park ? 'park' : house ? 'house' : 'block', v: rng() < 0.5 });
       if (park) {
         const mapUV = (u: number, v: number): Vec2 => warp(u, v);
-        const pond = decoratePark(out, rng, u0, u1, v0, v1, mapUV);
+        const decor = decoratePark(out, rng, u0, u1, v0, v1, mapUV);
         out.parkTreeJobs.push({ n: clamp(Math.floor((u1 - u0) * (v1 - v0) / 110), 30, 220),
-          sample: parkSample(u0, u1, v0, v1, mapUV, pond) });
+          sample: parkSample(u0, u1, v0, v1, mapUV, decor) });
         continue;
       }
       // ロット分割
@@ -301,9 +366,9 @@ export function genRadialPlan(rng: Rng, cityCore: Vec2, cityHouseTh: number): Pl
         // 扇形を(弧長, 半径)の局所矩形とみなして碁盤目の公園と同じ装飾を通す
         const arcLen = (aB - aA) * rm;
         const mapFan = (p: number, q: number): Vec2 => polar(aA + p / rm, q);
-        const pond = decoratePark(out, rng, 0, arcLen, rIn, rOut, mapFan);
+        const decor = decoratePark(out, rng, 0, arcLen, rIn, rOut, mapFan);
         out.parkTreeJobs.push({ n: clamp(Math.floor((rOut - rIn) * (aB - aA) * rm / 110), 30, 200),
-          sample: parkSample(0, arcLen, rIn, rOut, mapFan, pond) });
+          sample: parkSample(0, arcLen, rIn, rOut, mapFan, decor) });
         continue;
       }
       // ロット分割(半径方向 × 角度方向)

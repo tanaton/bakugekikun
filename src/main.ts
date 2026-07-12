@@ -13,6 +13,7 @@ import {
 } from './ui/hud';
 import { createInput } from './ui/input';
 import { wireJoystick } from './ui/joystick';
+import { wireMap } from './ui/map';
 import { wireProfiler } from './ui/profiler';
 
 const canvas = $('gl') as HTMLCanvasElement;
@@ -36,7 +37,13 @@ $('hint').textContent = isTouch
   : '右クリックで爆撃地点を指定せよ';
 
 // --- UI配線 ---
+// 地面テクスチャのcanvasは再生成でview(とtex)ごと差し替わるためgetterで渡す
+const map = wireMap({
+  getGroundCanvas: () => world.view.ground.tex.image as HTMLCanvasElement,
+  cam: input.cam,
+});
 function regen(seed: string): void {
+  map.close();   // 古い街のマップを出したままにしない
   regenerate(world, seed);
   setPlanName(world.city.plan);
   updateHUD(world.sim.stats);

@@ -38,7 +38,7 @@ export function createInput(canvas: HTMLCanvasElement,
     cam.pitch = THREE.MathUtils.clamp(cam.pitch + dy * 0.004, 0.28, 1.5);
   };
   const zoomBy = (f: number): void => {
-    cam.dist = THREE.MathUtils.clamp(cam.dist * f, 120, 4200);
+    cam.dist = THREE.MathUtils.clamp(cam.dist * f, 40, 4200);
   };
 
   // タッチはマウスと違いタップ(=爆撃)/ドラッグ/ピンチの判別が要るので状態機械に通す。

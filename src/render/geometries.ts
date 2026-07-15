@@ -65,9 +65,12 @@ export function makeHouseGeometry(): THREE.BufferGeometry {
     [e, ey, -e], [-e, ey, -e], [-e, ry, 0],  [e, ey, -e], [-e, ry, 0], [e, ry, 0], // -z屋根面
     [e, ey, e], [e, ey, -e], [e, ry, 0],                                           // 妻面 +x
     [-e, ey, -e], [-e, ey, e], [-e, ry, 0],                                        // 妻面 -x
+    // 軒裏(屋根の底面)。影パスは裏面描画なので、これがないと軒の張り出し
+    // (e-0.5)ぶんだけ屋根の影と壁の影が離れて地面に光る隙間ができる
+    [-e, ey, -e], [e, ey, -e], [e, ey, e],  [-e, ey, -e], [e, ey, e], [-e, ey, e],
   ];
-  const NS = [[0, .827, .561], [0, .827, -.561], [1, 0, 0], [-1, 0, 0]];
-  const cnts = [6, 6, 3, 3];
+  const NS = [[0, .827, .561], [0, .827, -.561], [1, 0, 0], [-1, 0, 0], [0, -1, 0]];
+  const cnts = [6, 6, 3, 3, 6];
   const pos: number[] = [], nor: number[] = [];
   let vi = 0;
   cnts.forEach((c, f) => { for (let k = 0; k < c; k++) { pos.push(...V[vi++]); nor.push(...NS[f]); } });

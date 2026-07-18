@@ -1,7 +1,7 @@
-# 爆撃くん — GOD'S EYE STRIKE
+# [爆撃くん — GOD'S EYE STRIKE](https://tanaton.github.io/bakugekikun/)
 
 神の視点で5km四方の3D都市をミサイル爆撃するブラウザゲーム。
-[爆撃くん — GOD'S EYE STRIKE](https://tanaton.github.io/bakugekikun/)
+`docs/index.html` をブラウザで開くだけで動く自己完結の単一HTMLファイル(GitHub Pages公開用)。
 
 ## 遊び方
 

@@ -86,8 +86,41 @@ function spawnMissileMesh(gfx: Gfx, pos: THREE.Vector3, vel: THREE.Vector3, scal
   return mesh;
 }
 
+// ミサイルの撃ち出し位置(目標からの水平オフセットと高度)。flightTimeと対
+const LAUNCH_R = 480, LAUNCH_ALT = 1600;
+
+// 発射から着弾までの飛翔秒数
+export function flightTime(w: Weapon): number {
+  return Math.hypot(LAUNCH_R, LAUNCH_ALT) / w.speed;
+}
+
+// ワールド座標targetへの発射(target.yはterrain.h済みであること)。
+// クリック爆撃と逃走モードの爆撃AIで共用。withMarker=falseで着弾点マーカーを出さない
+export function launchStrike(world: World, target: THREE.Vector3, w: Weapon, withMarker = true): void {
+  const { gfx, sim } = world;
+  const a = Math.random() * Math.PI * 2;
+  const start = new THREE.Vector3(
+    target.x + Math.cos(a) * LAUNCH_R, target.y + LAUNCH_ALT, target.z + Math.sin(a) * LAUNCH_R);
+  const vel = target.clone().sub(start).normalize().multiplyScalar(w.speed);
+  const mesh = spawnMissileMesh(gfx, start, vel, w.scale);
+
+  let marker: THREE.Mesh | null = null;
+  if (withMarker) {
+    marker = new THREE.Mesh(gfx.fx.ringGeo, markerMatFor(w));
+    marker.rotation.x = -Math.PI / 2;
+    marker.position.set(target.x, target.y + 2.5, target.z);
+    gfx.scene.add(marker);
+  }
+
+  // 分裂・着弾の挙動は武器定義をそのまま持たせる
+  sim.missiles.push({ pos: start, vel, target, mesh, marker, trailT: 0,
+    split: w.split ?? null, boom: w.boom });
+  sim.stats.mCount++;
+  playWhoosh();
+}
+
 export function requestStrike(world: World, px: number, py: number): void {
-  const { gfx, sim, city } = world;
+  const { gfx, city } = world;
   const w = WEAPONS[world.settings.weaponIdx];
   const ndc = new THREE.Vector2((px / innerWidth) * 2 - 1, -(py / innerHeight) * 2 + 1);
   raycaster.setFromCamera(ndc, gfx.camera);
@@ -100,22 +133,7 @@ export function requestStrike(world: World, px: number, py: number): void {
   hit.x = clampToMap(hit.x);
   hit.z = clampToMap(hit.z);
   hit.y = city.terrain.h(hit.x, hit.z);
-
-  const a = Math.random() * Math.PI * 2;
-  const start = new THREE.Vector3(hit.x + Math.cos(a) * 480, hit.y + 1600, hit.z + Math.sin(a) * 480);
-  const vel = hit.clone().sub(start).normalize().multiplyScalar(w.speed);
-  const mesh = spawnMissileMesh(gfx, start, vel, w.scale);
-
-  const marker = new THREE.Mesh(gfx.fx.ringGeo, markerMatFor(w));
-  marker.rotation.x = -Math.PI / 2;
-  marker.position.set(hit.x, hit.y + 2.5, hit.z);
-  gfx.scene.add(marker);
-
-  // 分裂・着弾の挙動は武器定義をそのまま持たせる
-  sim.missiles.push({ pos: start, vel, target: hit, mesh, marker, trailT: 0,
-    split: w.split ?? null, boom: w.boom });
-  sim.stats.mCount++;
-  playWhoosh();
+  launchStrike(world, hit, w);
   hideHint();
 }
 

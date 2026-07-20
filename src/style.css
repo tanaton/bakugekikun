@@ -96,9 +96,92 @@ button:focus-visible{ outline:1px solid var(--amber); outline-offset:1px; }
   border-radius:50%; background:rgba(255,176,82,.35); border:1px solid var(--amber);
   pointer-events:none;
 }
+/* ---- 逃走モード(html.escapeはmain.ts/escapeModeが付与) ---- */
+html.escape #report{ display:none; }
+html.escape #weaponBtn{ display:none; }
+html.escape #hint{ display:none; }
+html.escape #help{ display:none; }
+#helpEsc{ display:none; bottom:14px; left:14px; font-size:11px; line-height:1.9; color:var(--dim); }
+#helpEsc b{ color:var(--text); font-weight:600; }
+#helpEsc .key{
+  display:inline-block; border:1px solid var(--line-dim); padding:0 5px; margin-right:7px;
+  color:var(--amber); font-size:10px; letter-spacing:.08em;
+}
+html.escape #helpEsc{ display:block; }
+html.touch #helpEsc{ display:none !important; }
+#escHud{ display:none; top:14px; right:14px; min-width:200px; border-top:2px solid var(--red); text-align:right; }
+html.escape #escHud{ display:block; }
+#survT{ font-size:26px; font-weight:700; font-variant-numeric:tabular-nums; }
+#bestT{ margin-top:2px; }
+#hpBar{ margin-top:9px; height:10px; border:1px solid var(--line); background:rgba(255,255,255,.06); }
+#hpFill{ height:100%; width:100%; background:#7dd87d; transition:width .15s ease-out, background .3s; }
+/* スタミナ(ダッシュ)。HPより細い帯 */
+#stBar{ margin-top:4px; height:6px; border:1px solid var(--line-dim); background:rgba(255,255,255,.06); }
+#stFill{ height:100%; width:100%; background:#5ab8e8; transition:background .3s; }
+/* DASHボタン(逃走モード+タッチ端末のみ)。ジョイスティックの対角に置く */
+#dashBtn{
+  display:none; position:absolute; right:22px; bottom:96px; width:74px; height:74px;
+  border-radius:50%; border:1px solid var(--amber); background:rgba(9,13,17,.55);
+  color:var(--amber); font-family:var(--mono); font-size:12px; letter-spacing:.14em;
+  align-items:center; justify-content:center;
+  pointer-events:auto; touch-action:none; user-select:none; -webkit-user-select:none;
+}
+html.touch.escape #dashBtn{ display:flex; }
+#miniMap{
+  display:none; position:absolute; top:128px; right:14px; width:132px; height:132px;
+  border:1px solid var(--line); background:var(--panel);
+}
+html.escape #miniMap{ display:block; }
+/* 被弾の赤ビネット(flashDamageがopacityを叩く。HP低下時は脈動) */
+#dmgVignette{
+  position:fixed; inset:0; pointer-events:none; z-index:3; opacity:0;
+  box-shadow: inset 0 0 130px 45px rgba(255,32,20,.8);
+}
+#dmgVignette.low{ animation:lowhp 1.1s ease-in-out infinite; }
+@keyframes lowhp{ 0%,100%{opacity:.2} 50%{opacity:.55} }
+/* 警報トースト(上中央。CSSアニメ1回分で消える) */
+#warnToast{
+  position:absolute; left:50%; top:60px; transform:translateX(-50%);
+  font-size:13px; letter-spacing:.16em; color:#ff9066;
+  background:var(--panel); border:1px solid var(--red); padding:9px 18px;
+  opacity:0; white-space:nowrap;
+}
+#warnToast.nuke{ color:#ffd23e; border-color:#ffd23e; }
+#warnToast.show{ animation:toast 2.6s ease-out; }
+@keyframes toast{
+  0%{opacity:0; transform:translateX(-50%) translateY(-8px)}
+  8%{opacity:1; transform:translateX(-50%) translateY(0)}
+  75%{opacity:1}
+  100%{opacity:0}
+}
+/* 画面端の方向矢印(warnings.tsがtransformで配置) */
+#warnArrows{ position:fixed; inset:0; pointer-events:none; z-index:2; }
+#warnArrows .arr{ position:absolute; left:0; top:0; display:none; color:#ff5533; }
+#warnArrows .arr.nuke{ color:#ffd23e; }
+#warnArrows .arr .tri{ position:absolute; font-size:22px; text-shadow:0 0 8px rgba(0,0,0,.9); }
+#warnArrows .arr .dist{
+  position:absolute; transform:translate(-50%, 14px); font-size:10px;
+  font-variant-numeric:tabular-nums; text-shadow:0 0 5px rgba(0,0,0,.9);
+}
+/* ゲームオーバー画面 */
+#gameOver{
+  position:fixed; inset:0; z-index:6; display:none; align-items:center; justify-content:center;
+  background:rgba(9,13,17,.55); pointer-events:auto;
+}
+#gameOver.open{ display:flex; }
+#gameOverPanel{ position:static; text-align:center; border-top:2px solid var(--red); min-width:264px; }
+#gameOverPanel h2{ margin:2px 0 10px; font-size:17px; letter-spacing:.3em; color:var(--red); }
+#goNew{ display:none; color:var(--amber); font-size:12px; letter-spacing:.2em; margin-bottom:6px;
+  animation:pulse 1.2s ease-in-out infinite; }
+#goTime{ font-size:19px; font-variant-numeric:tabular-nums; }
+#goBest{ margin-top:4px; color:var(--dim); font-variant-numeric:tabular-nums; }
+
 @media (max-width:640px){
   #report{ top:auto; bottom:64px; right:14px; min-width:0; }
   #help{ display:none; }
+  #escHud{ min-width:150px; padding:9px 11px; }
+  #survT{ font-size:20px; }
+  #miniMap{ top:104px; width:104px; height:104px; }
 }
 /* ---- タッチ端末: ジョイスティック表示・#cmd折りたたみ・ヒント位置調整 ----
    .touchはmain.tsが起動時にpointer:coarse判定で付与(JSと判定基準を共有するためCSS側では判定しない) */

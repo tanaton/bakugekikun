@@ -19,6 +19,23 @@ export interface InputState {
   cam: CamState;
   keys: Record<string, boolean>;
   move: { x: number; y: number };   // ジョイスティック等のアナログ移動入力(x=右, y=前、長さ1以下)
+  dash: boolean;                    // タッチのDASHボタン押下(PCのShiftと同じ扱い)
+  zoomRange: { min: number; max: number };   // ホイール/ピンチのズーム範囲(モードで差し替える)
+}
+
+// 神視点(サンドボックス)のズーム範囲。逃走モードはescapeMode側が三人称用に差し替える
+export const GOD_ZOOM = { min: 40, max: 4200 } as const;
+
+// キーボード(WASD/矢印)とジョイスティックの合成(長さ1超は正規化して斜めも等速)。
+// 神視点のカメラ移動と逃走モードのプレイヤー移動で共用
+export function combineMove(keys: Record<string, boolean>,
+    move: { x: number; y: number }): { x: number; y: number } {
+  const kx = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
+  const ky = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
+  let mx = kx + move.x, my = ky + move.y;
+  const mlen = Math.hypot(mx, my);
+  if (mlen > 1) { mx /= mlen; my /= mlen; }
+  return { x: mx, y: my };
 }
 
 export function createInput(canvas: HTMLCanvasElement,
@@ -26,19 +43,33 @@ export function createInput(canvas: HTMLCanvasElement,
   const cam: CamState = { focus: new THREE.Vector3(0, 0, 0), yaw: 0.7, pitch: 0.95, dist: 950 };
   const keys: Record<string, boolean> = {};
   const move = { x: 0, y: 0 };
+  const zoomRange = { min: GOD_ZOOM.min, max: GOD_ZOOM.max };
+  const state: InputState = { cam, keys, move, dash: false, zoomRange };
+  const releaseAll = (): void => { for (const k in keys) keys[k] = false; };
   addEventListener('keydown', e => {
+    // IME(日本語入力)が変換を横取りするとkeydownがkeyCode 229/isComposingになり、
+    // 対応するkeyupが届かず押しっぱなしになる。変換扱いのキーは移動に使わず、
+    // その時点で押下中の全キーも解除する(IMEがONのまま遊び始めた場合の保険)
+    if (e.isComposing || e.keyCode === 229) {
+      releaseAll();
+      return;
+    }
     if (!isInputTarget(e)) keys[e.code] = true;
   });
   addEventListener('keyup', e => { keys[e.code] = false; });
-  // フォーカスを失うとkeyupが届かず押しっぱなしになるため、全キーを解除する
-  addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+  // フォーカスを失うとkeyupが届かず押しっぱなしになるため、全キーを解除する。
+  // タブ切り替え(blurが発火しない環境がある)も同様
+  addEventListener('blur', releaseAll);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) releaseAll();
+  });
 
   const rotate = (dx: number, dy: number): void => {
     cam.yaw -= dx * 0.005;
     cam.pitch = THREE.MathUtils.clamp(cam.pitch + dy * 0.004, 0.28, 1.5);
   };
   const zoomBy = (f: number): void => {
-    cam.dist = THREE.MathUtils.clamp(cam.dist * f, 40, 4200);
+    cam.dist = THREE.MathUtils.clamp(cam.dist * f, zoomRange.min, zoomRange.max);
   };
 
   // タッチはマウスと違いタップ(=爆撃)/ドラッグ/ピンチの判別が要るので状態機械に通す。
@@ -96,7 +127,32 @@ export function createInput(canvas: HTMLCanvasElement,
     }
   });
 
-  return { cam, keys, move };
+  return state;
+}
+
+// yaw/pitch/distの球面座標でfocusを注視するカメラを配置し、地形めり込み防止と
+// 画面揺れの適用・減衰を行う。神視点(updateCamera)と逃走モードの三人称で共用。
+// minClear=地形からの最低クリアランス(m)、shakeScale=揺れ幅係数(至近カメラは小さく)
+export function placeOrbitCamera(cam: CamState, terrain: Terrain,
+    camera: THREE.PerspectiveCamera, sim: { shake: number }, dt: number, now: number,
+    minClear: number, shakeScale: number): void {
+  const fwx = Math.sin(cam.yaw), fwz = Math.cos(cam.yaw);
+  const cp = Math.cos(cam.pitch), sinP = Math.sin(cam.pitch);
+  camera.position.set(
+    cam.focus.x + fwx * cp * cam.dist,
+    cam.focus.y + sinP * cam.dist,
+    cam.focus.z + fwz * cp * cam.dist);
+  const minY = terrain.h(camera.position.x, camera.position.z) + minClear;
+  if (camera.position.y < minY) camera.position.y = minY;
+  camera.lookAt(cam.focus);
+  sim.shake = Math.min(sim.shake, 36);
+  if (sim.shake > 0.001) {
+    const t = now * 0.05, k = sim.shake * shakeScale;
+    camera.position.x += Math.sin(t * 1.3) * k;
+    camera.position.y += Math.sin(t * 1.7 + 2) * k * 0.6;
+    camera.position.z += Math.cos(t * 1.1) * k;
+    sim.shake *= Math.exp(-4.5 * dt);
+  }
 }
 
 // カメラの更新。shakeRefは残り揺れ量を持つオブジェクト(worldのsimが所有)
@@ -105,13 +161,8 @@ export function updateCamera(input: InputState, dt: number, terrain: Terrain,
   const { cam, keys, move } = input;
   const sp = cam.dist * 0.9 * dt * (keys.ShiftLeft || keys.ShiftRight ? 2.4 : 1);
   const fwx = Math.sin(cam.yaw), fwz = Math.cos(cam.yaw);
-  // キーボード(WASD/矢印)とジョイスティックを合成。長さ1超は正規化して斜めも等速にする
-  const kx = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
-  const ky = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
-  let mx = kx + move.x, my = ky + move.y;
+  const { x: mx, y: my } = combineMove(keys, move);
   if (mx !== 0 || my !== 0) {
-    const mlen = Math.hypot(mx, my);
-    if (mlen > 1) { mx /= mlen; my /= mlen; }
     cam.focus.x += (fwz * mx - fwx * my) * sp;
     cam.focus.z += (-fwx * mx - fwz * my) * sp;
   }
@@ -119,21 +170,5 @@ export function updateCamera(input: InputState, dt: number, terrain: Terrain,
   cam.focus.z = clampToMap(cam.focus.z);
   cam.focus.y = terrain.h(cam.focus.x, cam.focus.z);   // 注視点は地形に追従
   sunShadow.update(cam);                               // 影カメラも注視点に追従
-
-  const cp = Math.cos(cam.pitch), sinP = Math.sin(cam.pitch);
-  camera.position.set(
-    cam.focus.x + fwx * cp * cam.dist,
-    cam.focus.y + sinP * cam.dist,
-    cam.focus.z + fwz * cp * cam.dist);
-  const minY = terrain.h(camera.position.x, camera.position.z) + 12;  // 山にめり込まない
-  if (camera.position.y < minY) camera.position.y = minY;
-  camera.lookAt(cam.focus);
-  sim.shake = Math.min(sim.shake, 36);
-  if (sim.shake > 0.001) {
-    const t = performance.now() * 0.05;
-    camera.position.x += Math.sin(t * 1.3) * sim.shake;
-    camera.position.y += Math.sin(t * 1.7 + 2) * sim.shake * 0.6;
-    camera.position.z += Math.cos(t * 1.1) * sim.shake;
-    sim.shake *= Math.exp(-4.5 * dt);
-  }
+  placeOrbitCamera(cam, terrain, camera, sim, dt, performance.now(), 12, 1);
 }

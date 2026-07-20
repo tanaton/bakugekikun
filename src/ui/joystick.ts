@@ -23,7 +23,7 @@ export function wireJoystick(input: InputState): void {
   stick.addEventListener('pointerdown', e => {
     if (activeId !== -1) return;
     activeId = e.pointerId;
-    stick.setPointerCapture(e.pointerId);
+    try { stick.setPointerCapture(e.pointerId); } catch { /* 既に解放済みのポインタ */ }
     const r = stick.getBoundingClientRect();
     cx = r.left + r.width / 2; cy = r.top + r.height / 2;
     apply(e.clientX - cx, e.clientY - cy);
@@ -38,4 +38,18 @@ export function wireJoystick(input: InputState): void {
   };
   stick.addEventListener('pointerup', release);
   stick.addEventListener('pointercancel', release);
+  // キャプチャがOSやブラウザに横取りされてpointerup/cancelが届かない場合の保険。
+  // 追跡中の指を見失ったらスティックを必ずニュートラルへ戻す(走りっぱなし防止)
+  stick.addEventListener('lostpointercapture', release);
+
+  // DASHボタン(逃走モード+タッチ端末のみCSSで表示)。押している間だけinput.dash
+  const dashBtn = $('dashBtn');
+  dashBtn.addEventListener('pointerdown', e => {
+    input.dash = true;
+    try { dashBtn.setPointerCapture(e.pointerId); } catch { /* 既に解放済みのポインタ */ }
+  });
+  const dashOff = (): void => { input.dash = false; };
+  dashBtn.addEventListener('pointerup', dashOff);
+  dashBtn.addEventListener('pointercancel', dashOff);
+  dashBtn.addEventListener('lostpointercapture', dashOff);
 }

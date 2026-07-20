@@ -23,6 +23,9 @@ export interface Weapon {
   split?: WeaponSplit;          // クラスター弾: 上空で子弾に分裂
 }
 
+// 戦術核の全壊半径。爆発演出(detonateNuke)と逃走モードの警告円・被弾判定が共有する
+export const NUKE_R = 420;
+
 export const WEAPONS: readonly Weapon[] = [
   { id: 'single',  label: '弾種: 単弾頭ミサイル', speed: 620, scale: 1, markerColor: 0xff5533,
     hot: false, boom: 105 },

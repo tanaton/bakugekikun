@@ -4,6 +4,7 @@ import { updateHUD, setPerf } from '../ui/hud';
 import { updateCamera, type InputState } from '../ui/input';
 import { isProfilerOn, profShow, pt, ptBegin } from '../ui/profiler';
 import { updateCars } from './cars';
+import { updateEscapeFrame } from './escapeMode';
 import { updateBoomLights, miniBoom, updateFx, updateNukeEmitters } from './explosions';
 import { updateBurning, updateBurningBldgs } from './fire';
 import { updateCollapses } from './destruction';
@@ -50,7 +51,9 @@ export function startLoop(world: World, input: InputState): void {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     ptBegin();
-    updateCamera(input, dt, world.city.terrain, gfx.camera, gfx.sunShadow, sim);
+    // モード分岐はここ1箇所だけ。stepSim(ミサイル・爆発・破壊)は両モード共通
+    if (world.escape) updateEscapeFrame(world, input, dt, now);
+    else updateCamera(input, dt, world.city.terrain, gfx.camera, gfx.sunShadow, sim);
     pt('camera');
     stepSim(world, dt, now);
     updateHUD(sim.stats);          pt('hud');

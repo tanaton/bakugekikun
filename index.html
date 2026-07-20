@@ -32,6 +32,9 @@
       <button id="weaponBtn" style="flex:1" title="発射する弾種を切り替え"></button>
       <button id="mapBtn" title="都市マップを表示"></button>
     </div>
+    <div class="seedrow">
+      <button id="modeBtn" style="flex:1" title="爆撃モードと逃走モードを切り替え"></button>
+    </div>
     <div class="cmdExtra">
       <div class="label" id="planName" style="margin-top:8px">都市プラン: —</div>
       <div class="label" id="perf" style="margin-top:4px">— fps</div>
@@ -57,6 +60,42 @@
     <div><span class="key">右クリック</span><b style="color:var(--red)">爆撃指定</b></div>
     <div><span class="key">P</span><b>処理時間計測</b></div>
     <div><span class="key">M</span><b>地図</b></div>
+  </div>
+
+  <div class="panel" id="helpEsc">
+    <div class="label" style="margin-bottom:4px">Controls — 逃走モード</div>
+    <div><span class="key">W A S D / ↑←↓→</span><b>走る</b></div>
+    <div><span class="key">Shift</span><b style="color:var(--amber)">ダッシュ(スタミナ消費)</b></div>
+    <div><span class="key">左ドラッグ</span><b>視点回転</b></div>
+    <div><span class="key">ホイール</span><b>ズーム</b></div>
+    <div><span class="key">M</span><b>地図</b></div>
+    <div style="margin-top:4px;color:var(--red)">赤い円 = 着弾予定エリア。円の外へ逃げろ</div>
+  </div>
+
+  <!-- 逃走モードHUD(html.escapeのときだけCSSで表示) -->
+  <div class="panel" id="escHud">
+    <div class="label">Survival — 生存時間</div>
+    <div id="survT">0:00.0</div>
+    <div class="label" id="bestT">BEST 0:00.0</div>
+    <div id="hpBar"><div id="hpFill"></div></div>
+    <div id="stBar"><div id="stFill"></div></div>
+  </div>
+  <div id="dashBtn">DASH</div>
+  <canvas id="miniMap"></canvas>
+  <div id="warnToast"></div>
+  <div id="warnArrows"></div>
+  <div id="dmgVignette"></div>
+  <div id="gameOver">
+    <div class="panel" id="gameOverPanel">
+      <h2>撃破された</h2>
+      <div id="goNew">★ NEW RECORD ★</div>
+      <div id="goTime"></div>
+      <div id="goBest"></div>
+      <div class="seedrow" style="margin-top:14px">
+        <button id="retryBtn" style="flex:1">リトライ</button>
+        <button id="toSandboxBtn">爆撃モードへ</button>
+      </div>
+    </div>
   </div>
 
   <div class="panel" id="soundWrap"><button id="soundBtn"></button></div>

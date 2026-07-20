@@ -2,12 +2,14 @@
 
 import './render/colorMode';   // 必ず最初(モジュール初期化時のColor構築より先)
 import './style.css';
+import { enterEscape, exitEscape } from './game/escapeMode';
 import { startLoop } from './game/loop';
 import { prewarmShaders, requestStrike } from './game/missiles';
 import { WEAPONS } from './game/weapons';
 import { applyTime, createWorld, regenerate } from './game/world';
 import { applyQuality, createGfx, QUALITY_MODES, resizeGfx } from './render/gfx';
 import { isSoundOn, toggleSound } from './ui/audio';
+import { setModeLabel } from './ui/escapeHud';
 import {
   $, setPlanName, setQualityLabel, setSoundLabel, setTimeLabel, setWeaponLabel, updateHUD,
 } from './ui/hud';
@@ -24,7 +26,10 @@ addEventListener('resize', () => resizeGfx(gfx));
 resizeGfx(gfx);
 
 const world = createWorld(gfx, seedInput.value || 'DEFAULT');
-const input = createInput(canvas, (px, py) => requestStrike(world, px, py));
+// 逃走モード中はタップ/右クリックの爆撃指定を無効化(逃げる側なので)
+const input = createInput(canvas, (px, py) => {
+  if (!world.escape) requestStrike(world, px, py);
+});
 wireJoystick(input);
 
 // タッチ端末の判定はここで一度だけ行い、CSS側の表示切り替えは.touchクラスにぶら下げる
@@ -44,7 +49,11 @@ const map = wireMap({
 });
 function regen(seed: string): void {
   map.close();   // 古い街のマップを出したままにしない
+  // 逃走モード中の再生成は「新しい街でやり直し」(古い地形のままだと建物や水にめり込む)
+  const wasEscape = !!world.escape;
+  if (wasEscape) exitEscape(world, input);
   regenerate(world, seed);
+  if (wasEscape) enterEscape(world, input);
   setPlanName(world.city.plan);
   updateHUD(world.sim.stats);
 }
@@ -77,6 +86,20 @@ $('soundBtn').addEventListener('click', () => {
   setSoundLabel(toggleSound());
 });
 $('moreBtn').addEventListener('click', () => $('cmd').classList.toggle('open'));
+// --- 逃走モード ---
+$('modeBtn').addEventListener('click', () => {
+  if (world.escape) exitEscape(world, input);
+  else enterEscape(world, input);
+  setModeLabel(!!world.escape);
+});
+$('retryBtn').addEventListener('click', () => {
+  if (!world.escape) return;
+  regen(world.seed);   // 破壊済みの街をリセットして再スタート(escape中はregenが再入場する)
+});
+$('toSandboxBtn').addEventListener('click', () => {
+  exitEscape(world, input);
+  setModeLabel(false);
+});
 wireProfiler();
 
 // ボタンの初期ラベルはJS側の状態定義から入れる(HTMLとの文言二重管理を避ける)
@@ -85,6 +108,7 @@ setQualityLabel(gfx.quality);
 setSoundLabel(isSoundOn());
 const w0 = WEAPONS[world.settings.weaponIdx];
 setWeaponLabel(w0.label, w0.hot);
+setModeLabel(false);
 setPlanName(world.city.plan);
 updateHUD(world.sim.stats);
 

@@ -76,6 +76,7 @@ export class GroundView {
   private readonly craters: Extract<Stamp, { kind: 'crater' }>[] = [];   // pushLotの穴判定用(数値のみの全履歴)
   private flushAt = 0;    // GPU転送の間引き用(連続爆撃で毎フレーム転送しない)
   private respecAt = 0;   // 部分転送後のGPUテクスチャ作り直し予約時刻(0=予約なし)
+  rev = 0;                // canvasの絵が変わるたび増える(ミニマップの下地キャッシュ無効化用)
   private palette!: GroundPalette;   // 現在の時間帯パレット(drawGroundで確定。flushの差分描きが使う)
 
   constructor(private readonly city: CityData, noiseRng: Rng) {
@@ -267,6 +268,7 @@ export class GroundView {
       x1 = Math.max(x1, px + r); z1 = Math.max(z1, pz + r);
     }
     this.pending.length = 0;
+    this.rev++;
     x0 = Math.max(0, Math.floor(x0)); z0 = Math.max(0, Math.floor(z0));
     x1 = Math.min(GROUND_TEX, Math.ceil(x1)); z1 = Math.min(GROUND_TEX, Math.ceil(z1));
     this.respecAt = simT + RESPEC_DELAY;   // 新しい跡が続く間は作り直しを先送りする
@@ -285,6 +287,7 @@ export class GroundView {
     // 未描画の跡を先に累積レイヤーへ焼き込んでおく(gCanvasはこの後まるごと描き直す)
     for (const st of this.pending) this.drawStamp(gCtx!, G, st);
     this.pending.length = 0;
+    this.rev++;
     const TEX = GROUND_TEX, s = GROUND_SCALE, w2c = worldToTex;
     const g = gCtx!;
     const city = this.city;

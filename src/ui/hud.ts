@@ -19,11 +19,16 @@ function yen(v: number): string {
 }
 
 const hudShown: Record<string, string> = {};   // 前回表示した文字列。変化した項目だけDOMを書き換える
-function setHud(id: string, value: number, fmt?: (v: number) => string): void {
-  const s = fmt ? fmt(value) : value.toLocaleString();
+
+// 変化したときだけtextContentを書き換える(毎フレーム呼ばれるHUD更新の共通機構)
+export function setText(id: string, s: string): void {
   if (hudShown[id] === s) return;
   hudShown[id] = s;
   $(id).textContent = s;
+}
+
+function setHud(id: string, value: number, fmt?: (v: number) => string): void {
+  setText(id, fmt ? fmt(value) : value.toLocaleString());
 }
 
 let dmgShown = 0;   // 被害総額のカウントアップ演出値(表示専用の状態なのでHUD側で持つ)

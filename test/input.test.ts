@@ -14,7 +14,8 @@ function makeInput(keys: Record<string, boolean> = {},
     move = { x: 0, y: 0 }, yaw = 0): InputState {
   return {
     cam: { focus: new THREE.Vector3(0, 0, 0), yaw, pitch: 0.95, dist: 1000 },
-    keys, move,
+    keys, move, dash: false,
+    zoomRange: { min: 40, max: 4200 },
   };
 }
 

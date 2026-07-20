@@ -7,6 +7,8 @@ import { decayLights, fireLight } from '../render/lightPool';
 import { flashNuke } from '../ui/hud';
 import { playBoom, playNuke, playPop } from '../ui/audio';
 import { destroyAround } from './destruction';
+import { hitPlayer } from './escapeMode';
+import { NUKE_R } from './weapons';
 import type { World } from './world';
 
 function addFx(world: World, mesh: FxMesh, life: number,
@@ -71,6 +73,7 @@ const R_REF = 105;
 export const CRATER_RATIO = 0.7;
 
 export function detonate(world: World, p: { x: number; y: number; z: number }, R: number): void {
+  hitPlayer(world, p, R, false);   // 逃走モードの被弾判定(サンドボックス中は即return)
   const { gfx, sim, city, view, debris } = world;
   const FX = gfx.fx;
   const f = R / R_REF;               // 規模係数(クラスター子弾は小さめ)
@@ -171,7 +174,9 @@ export function detonate(world: World, p: { x: number; y: number; z: number }, R
 // 二次爆発(小型・時間差で誘爆する)
 export function miniBoom(world: World, d: { x: number; z: number }): void {
   const { gfx, city, debris } = world;
+  const R = 26;                     // 破壊半径=被弾半径
   if (inAnyWater(city, d.x, d.z)) return;   // 水面下からは誘爆させない(着弾同様、水は跡も演出も残さない)
+  hitPlayer(world, d, R, false);    // 二次誘爆もかすり傷程度に当たる
   const gy = city.terrain.h(d.x, d.z);
   flashLight(world, d.x, d.z, 3.5, gy);
   growFx(world, gfx.fx.sphereAdd(0xff7a30, 0.95), d.x, gy + 6, d.z, 0.5, 4, 42, 0.5, 0.95, 1.2);
@@ -192,7 +197,7 @@ export function miniBoom(world: World, d: { x: number; z: number }): void {
     sm.life = 2.5 + Math.random() * 2; sm.size = 18 + Math.random() * 18;
     sm.growth = 2.2; sm.drag = 0.4; sm.fadeIn = 0.2; sm.baseAlpha = 0.55;
   }
-  destroyAround(world, d, 26);
+  destroyAround(world, d, R);
   world.sim.shake += 1.2;
   playPop();
 }
@@ -239,9 +244,10 @@ export function updateNukeEmitters(world: World, dt: number): void {
 }
 
 export function detonateNuke(world: World, p: { x: number; y: number; z: number }): void {
+  const R = NUKE_R;                  // 全壊半径
+  hitPlayer(world, p, R, true);      // 逃走モードの被弾判定(サンドボックス中は即return)
   const { gfx, sim, city, view, debris } = world;
   const FX = gfx.fx;
-  const R = 420;                     // 全壊半径
   const gy = p.y;
   // --- 画面全体が白く飛ぶ ---
   flashNuke();

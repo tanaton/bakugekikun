@@ -76,6 +76,38 @@ export function playPop(): void {
   noiseBurst(actx.currentTime, 0, 0.5, 1400, 1400, 0.16, 3);
 }
 
+// 爆撃警報サイレン(逃走モード)。連続予告で鳴りっぱなしにならないようスロットルする
+let lastAlarmT = -10;
+export function playAlarm(nuke: boolean): void {
+  if (!actx || !soundOn) return;
+  const t = actx.currentTime;
+  if (t - lastAlarmT < 1.2) return;
+  lastAlarmT = t;
+  const osc = actx.createOscillator();
+  const gn = actx.createGain();
+  if (nuke) {
+    // 核: 低く長いうなり
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(220, t);
+    osc.frequency.exponentialRampToValueAtTime(150, t + 1.8);
+    gn.gain.setValueAtTime(0.0001, t);
+    gn.gain.exponentialRampToValueAtTime(0.09, t + 0.1);
+    gn.gain.exponentialRampToValueAtTime(0.001, t + 2.0);
+  } else {
+    // 通常: 2トーンの短いサイレン
+    osc.type = 'square';
+    for (let i = 0; i < 6; i++) osc.frequency.setValueAtTime(i % 2 ? 900 : 640, t + i * 0.13);
+    gn.gain.setValueAtTime(0.0001, t);
+    gn.gain.exponentialRampToValueAtTime(0.05, t + 0.04);
+    gn.gain.setValueAtTime(0.05, t + 0.65);
+    gn.gain.exponentialRampToValueAtTime(0.001, t + 0.85);
+  }
+  osc.connect(gn).connect(actx.destination);
+  // stopはstartの後に呼ぶこと(先に呼ぶとInvalidStateErrorでrAFループごと死ぬ)
+  osc.start(t);
+  osc.stop(t + (nuke ? 2.05 : 0.9));
+}
+
 export function playWhoosh(): void {
   if (!actx || !soundOn) return;
   const t = actx.currentTime;

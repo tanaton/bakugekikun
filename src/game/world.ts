@@ -11,6 +11,7 @@ import type { Gfx } from '../render/gfx';
 import { LIGHT_SCALE, TIMES, type TimeMode } from '../render/sky';
 import { resetHUD, resetNukeFlash } from '../ui/hud';
 import { DebrisSystem } from './debris';
+import type { EscapeState } from './escapeMode';
 import { removeMissile } from './missiles';
 import { createSimState, type SimState } from './simState';
 
@@ -28,6 +29,7 @@ export interface World {
   gfx: Gfx;
   debris: DebrisSystem;
   settings: Settings;
+  escape: EscapeState | null;   // 逃走モード中のみ非null(escapeMode.tsが所有)
 }
 
 export function createWorld(gfx: Gfx, seed: string): World {
@@ -41,6 +43,7 @@ export function createWorld(gfx: Gfx, seed: string): World {
     gfx,
     debris: new DebrisSystem(gfx.scene),
     settings,
+    escape: null,
   };
   setTotals(world);
   return world;
@@ -53,8 +56,9 @@ function setTotals(world: World): void {
   stats.tTotal = world.city.trees.length;
 }
 
-// シミュレーション状態のリセット(飛翔中のミサイル・エフェクト・光源・瓦礫を消す)
-function resetSim(world: World): void {
+// シミュレーション状態のリセット(飛翔中のミサイル・エフェクト・光源・瓦礫を消す)。
+// 逃走モードの開始/終了でも使うためexport。統計の総数は張り直す
+export function resetSim(world: World): void {
   const { sim, gfx } = world;
   for (const m of sim.missiles) removeMissile(world, m);
   for (const f of sim.fx) gfx.fx.release(f.mesh);
@@ -66,6 +70,7 @@ function resetSim(world: World): void {
   resetNukeFlash();
   resetHUD();
   world.sim = createSimState();
+  setTotals(world);
 }
 
 // 街の再生成。gfxの常設プールには触らない
